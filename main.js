@@ -331,26 +331,172 @@ async function fail(message, text) {
 /* =========================================
                  LOGGING
 ========================================= */
+/* ==========================================
+           RAGEL SADY - SMART LOG UI
+========================================== */
+
+const LOG_COLORS = {
+  delete: 0xFF3344,
+  punishment: 0xFF3344,
+  join: 0x22C58B,
+  leave: 0xFF9944,
+  role: 0x2997FF,
+  voice: 0x9B59FF,
+  channel: 0x3498DB,
+  nickname: 0xE67E22,
+  invite: 0x22C58B,
+  mass: 0xFF3344,
+  default: 0xED1C24
+};
+
+function getLogStyle(category, title) {
+  const text = `${category} ${title}`.toLowerCase();
+
+  if (text.includes("delete") || text.includes("deleted")) {
+    return {
+      color: LOG_COLORS.delete,
+      icon: "🗑️"
+    };
+  }
+
+  if (
+    text.includes("ban") ||
+    text.includes("kick") ||
+    text.includes("timeout") ||
+    text.includes("jail") ||
+    text.includes("warn")
+  ) {
+    return {
+      color: LOG_COLORS.punishment,
+      icon: "🛡️"
+    };
+  }
+
+  if (text.includes("join")) {
+    return {
+      color: LOG_COLORS.join,
+      icon: "📥"
+    };
+  }
+
+  if (text.includes("leave")) {
+    return {
+      color: LOG_COLORS.leave,
+      icon: "📤"
+    };
+  }
+
+  if (text.includes("role")) {
+    return {
+      color: LOG_COLORS.role,
+      icon: "🎭"
+    };
+  }
+
+  if (text.includes("voice")) {
+    return {
+      color: LOG_COLORS.voice,
+      icon: "🎙️"
+    };
+  }
+
+  if (text.includes("channel")) {
+    return {
+      color: LOG_COLORS.channel,
+      icon: "📁"
+    };
+  }
+
+  if (text.includes("nickname")) {
+    return {
+      color: LOG_COLORS.nickname,
+      icon: "📝"
+    };
+  }
+
+  if (text.includes("invite")) {
+    return {
+      color: LOG_COLORS.invite,
+      icon: "🔗"
+    };
+  }
+
+  if (text.includes("mass")) {
+    return {
+      color: LOG_COLORS.mass,
+      icon: "🚨"
+    };
+  }
+
+  return {
+    color: LOG_COLORS.default,
+    icon: "📋"
+  };
+}
+
+function makeLogEmbed(category, title, description) {
+  const style = getLogStyle(category, title);
+
+  const cleanTitle = String(title)
+    .replace(/^[^\p{L}\p{N}]+/u, "")
+    .trim();
+
+  const embed = new EmbedBuilder()
+    .setColor(style.color)
+    .setTitle(`${style.icon} ${cleanTitle}`)
+    .setDescription(trim(description, 3900))
+    .setFooter({
+      text: "RAGEL SADY • SERVER LOGS"
+    })
+    .setTimestamp();
+
+  return embed;
+}
+
+/* ==========================================
+                LOG SENDER
+========================================== */
 
 async function log(guild, category, title, description) {
+  const id = CONFIG.logs[category];
+
+  if (!id) return false;
+
   try {
-    const id = CONFIG.logs[category];
-
-    if (!id) return false;
-
     const channel = await guild.channels
       .fetch(id)
       .catch(() => null);
 
     if (!channel?.isTextBased()) {
-      console.error(`LOG CHANNEL UNAVAILABLE: ${id}`);
+      console.error(
+        `LOG CHANNEL NOT FOUND [${category}]: ${id}`
+      );
       return false;
     }
 
+    const bot = await guild.members.fetchMe();
+
+    const permissions = channel.permissionsFor(bot);
+
+    if (!permissions?.has([
+      P.ViewChannel,
+      P.SendMessages,
+      P.EmbedLinks
+    ])) {
+      console.error(
+        `LOG PERMISSIONS MISSING [${category}]: ${id}`
+      );
+      return false;
+    }
+
+    const embed = makeLogEmbed(
+      category,
+      title,
+      description
+    );
+
     await channel.send({
-      embeds: [
-        makeEmbed(title, description)
-      ],
+      embeds: [embed],
       allowedMentions: {
         parse: []
       }
@@ -367,45 +513,6 @@ async function log(guild, category, title, description) {
     return false;
   }
 }
-
-async function actionLog(
-  message,
-  category,
-  action,
-  target,
-  details = {}
-) {
-  const lines = [
-    `**الإجراء:** ${action}`,
-    "**النتيجة:** نجحت العملية",
-    "",
-    `**العضو:** ${target?.id ? mention(target.id) : "غير متاح"}`,
-    `**User ID:** ${target?.id || "غير متاح"}`,
-    "",
-    `**الإداري:** ${mention(message.author.id)}`,
-    `**Admin ID:** ${message.author.id}`,
-    "",
-    `**السيرفر:** ${trim(message.guild.name, 100)}`,
-    `**Guild ID:** ${message.guild.id}`,
-    "",
-    `**القناة:** ${channelMention(message.channelId)}`,
-    `**Channel ID:** ${message.channelId}`,
-    "",
-    `**التاريخ:** <t:${now()}:F>`
-  ];
-
-  for (const [key, value] of Object.entries(details)) {
-    lines.push(`**${key}:** ${trim(value, 500)}`);
-  }
-
-  await log(
-    message.guild,
-    category,
-    `📋 ${action} LOG`,
-    lines.join("\n")
-  );
-}
-
 /* =========================================
               TARGET RESOLVER
 ========================================= */
