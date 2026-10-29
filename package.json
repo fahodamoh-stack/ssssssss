@@ -1,0 +1,16 @@
+{
+  "name": "ragel-sady-bot",
+  "version": "1.0.0",
+  "description": "RAGEL SADY Discord Moderation Bot",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "engines": {
+    "node": ">=22.13.0 <23"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.6.1"
+  }
+}
