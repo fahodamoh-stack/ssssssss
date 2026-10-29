@@ -1,7 +1,7 @@
 {
   "name": "ragel-sady-bot",
-  "version": "1.0.0",
-  "description": "RAGEL SADY Discord Moderation Bot",
+  "version": "2.0.0",
+  "private": true,
   "main": "main.js",
   "scripts": {
     "start": "node main.js"
