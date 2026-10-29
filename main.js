@@ -6,30 +6,33 @@ const {
   Partials,
   PermissionsBitField,
   EmbedBuilder,
-  ChannelType
+  ChannelType,
+  AuditLogEvent
 } = require("discord.js");
 
 const { DatabaseSync } = require("node:sqlite");
 
-/* ==========================================
-             RAGEL SADY BOT
-========================================== */
+/* =========================================
+              RAGEL SADY
+========================================= */
 
 const TOKEN = process.env.TOKEN;
 const PREFIX = ".";
 const EMOJI_ID = process.env.SUCCESS_EMOJI_ID;
-const EMOJI_ANIMATED = false;
 
 if (!TOKEN) {
-  throw new Error("TOKEN is missing from .env");
+  throw new Error("TOKEN is missing");
 }
 
 const CONFIG = {
   name: "RAGEL SADY",
   color: 0xED1C24,
 
+  botRole: "1565378696620023940",
   jailRole: "1563059391127621702",
+
   welcomeChannel: "1560996836808855593",
+  startupChannel: "1560996836808855593",
 
   defaultTimeout: 5,
   defaultTempban: 5,
@@ -85,9 +88,9 @@ const CONFIG = {
   }
 };
 
-/* ==========================================
+/* =========================================
                  CLIENT
-========================================== */
+========================================= */
 
 const client = new Client({
   intents: [
@@ -112,58 +115,87 @@ const client = new Client({
   }
 });
 
-/* ==========================================
+/* =========================================
                  DATABASE
-========================================== */
+========================================= */
 
 const db = new DatabaseSync("./ragel_sady.sqlite");
 
 db.exec(`
-CREATE TABLE IF NOT EXISTS warnings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild TEXT NOT NULL,
-  user TEXT NOT NULL,
-  admin TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  created INTEGER NOT NULL
-);
+  PRAGMA journal_mode = WAL;
+  PRAGMA busy_timeout = 5000;
 
-CREATE TABLE IF NOT EXISTS tempbans (
-  guild TEXT NOT NULL,
-  user TEXT NOT NULL,
-  admin TEXT,
-  reason TEXT,
-  expires INTEGER NOT NULL,
-  PRIMARY KEY (guild, user)
-);
+  CREATE TABLE IF NOT EXISTS warnings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild TEXT NOT NULL,
+    user TEXT NOT NULL,
+    admin TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created INTEGER NOT NULL
+  );
 
-CREATE TABLE IF NOT EXISTS silenced (
-  guild TEXT NOT NULL,
-  user TEXT NOT NULL,
-  role TEXT NOT NULL,
-  PRIMARY KEY (guild, user)
-);
+  CREATE TABLE IF NOT EXISTS tempbans (
+    guild TEXT NOT NULL,
+    user TEXT NOT NULL,
+    admin TEXT,
+    reason TEXT,
+    expires INTEGER NOT NULL,
+    PRIMARY KEY (guild, user)
+  );
 
-CREATE TABLE IF NOT EXISTS actions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild TEXT NOT NULL,
-  admin TEXT NOT NULL,
-  target TEXT,
-  action TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created INTEGER NOT NULL
-);
+  CREATE TABLE IF NOT EXISTS jailed (
+    guild TEXT NOT NULL,
+    user TEXT NOT NULL,
+    admin TEXT NOT NULL,
+    created INTEGER NOT NULL,
+    PRIMARY KEY (guild, user)
+  );
+
+  CREATE TABLE IF NOT EXISTS silenced (
+    guild TEXT NOT NULL,
+    user TEXT NOT NULL,
+    role TEXT NOT NULL,
+    PRIMARY KEY (guild, user)
+  );
+
+  CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild TEXT NOT NULL,
+    admin TEXT NOT NULL,
+    target TEXT,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS guild_settings (
+    guild TEXT NOT NULL,
+    setting TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (guild, setting)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_warnings
+  ON warnings(guild, user);
+
+  CREATE INDEX IF NOT EXISTS idx_tempbans
+  ON tempbans(expires);
+
+  CREATE INDEX IF NOT EXISTS idx_actions
+  ON actions(guild, admin, created);
 `);
 
-/* ==========================================
-                 UTILITIES
-========================================== */
+console.log("DATABASE READY");
+
+/* =========================================
+                UTILITIES
+========================================= */
+
+const P = PermissionsBitField.Flags;
 
 const recentMessages = new Map();
 const adminActions = new Map();
 const inviteCache = new Map();
-
-const P = PermissionsBitField.Flags;
 
 function mention(id) {
   return `<@${id}>`;
@@ -207,13 +239,48 @@ function parseDuration(value, fallback = 5) {
     : null;
 }
 
-function successEmoji() {
-  if (!isID(EMOJI_ID)) return "";
+function parseDurationArgs(args, index, fallback) {
+  const value = args[index];
 
-  const prefix = EMOJI_ANIMATED ? "a" : "";
+  if (value === undefined) {
+    return {
+      duration: fallback,
+      reasonIndex: index
+    };
+  }
 
-  return `<${prefix}:barbiecheckmark:${EMOJI_ID}>`;
+  const duration = parseDuration(value, fallback);
+
+  if (duration !== null) {
+    return {
+      duration,
+      reasonIndex: index + 1
+    };
+  }
+
+  // النص غير الرقمي يمكن اعتباره سببًا،
+  // أما القيم التي تبدأ برقم وتمثل مدة غير صحيحة فترفض.
+  if (/^[+-]?\d/.test(value)) return null;
+
+  return {
+    duration: fallback,
+    reasonIndex: index
+  };
 }
+
+function successEmoji() {
+  if (!isID(EMOJI_ID)) return "✅";
+
+  const emoji = client.emojis.cache.get(EMOJI_ID);
+
+  if (emoji) return emoji.toString();
+
+  return `<:barbiecheckmark:${EMOJI_ID}>`;
+}
+
+/* =========================================
+                 EMBEDS
+========================================= */
 
 function makeEmbed(title, description, options = {}) {
   const embed = new EmbedBuilder()
@@ -222,22 +289,22 @@ function makeEmbed(title, description, options = {}) {
     .setDescription(trim(description, 4000))
     .setTimestamp();
 
-  if (options.thumbnail) {
-    embed.setThumbnail(options.thumbnail);
-  }
-
   if (options.image) {
     embed.setImage(options.image);
+  }
+
+  if (options.thumbnail) {
+    embed.setThumbnail(options.thumbnail);
   }
 
   return embed;
 }
 
-async function sendEmbed(message, title, description, options = {}) {
-  const embed = makeEmbed(title, description, options);
-
+async function sendEmbed(message, title, description) {
   return message.reply({
-    embeds: [embed],
+    embeds: [
+      makeEmbed(title, description)
+    ],
     allowedMentions: {
       parse: [],
       repliedUser: false
@@ -246,11 +313,9 @@ async function sendEmbed(message, title, description, options = {}) {
 }
 
 async function done(message, text) {
-  const emoji = successEmoji();
-
   return sendEmbed(
     message,
-    emoji ? `${emoji} SUCCESS` : "✅ SUCCESS",
+    `${successEmoji()} SUCCESS`,
     text
   );
 }
@@ -263,6 +328,10 @@ async function fail(message, text) {
   );
 }
 
+/* =========================================
+                 LOGGING
+========================================= */
+
 async function log(guild, category, title, description) {
   try {
     const id = CONFIG.logs[category];
@@ -273,7 +342,10 @@ async function log(guild, category, title, description) {
       .fetch(id)
       .catch(() => null);
 
-    if (!channel?.isTextBased()) return false;
+    if (!channel?.isTextBased()) {
+      console.error(`LOG CHANNEL UNAVAILABLE: ${id}`);
+      return false;
+    }
 
     await channel.send({
       embeds: [
@@ -287,14 +359,56 @@ async function log(guild, category, title, description) {
     return true;
 
   } catch (error) {
-    console.error("LOG ERROR:", error.message);
+    console.error(
+      `LOG ERROR [${category}]:`,
+      error.message
+    );
+
     return false;
   }
 }
 
-/* ==========================================
+async function actionLog(
+  message,
+  category,
+  action,
+  target,
+  details = {}
+) {
+  const lines = [
+    `**الإجراء:** ${action}`,
+    "**النتيجة:** نجحت العملية",
+    "",
+    `**العضو:** ${target?.id ? mention(target.id) : "غير متاح"}`,
+    `**User ID:** ${target?.id || "غير متاح"}`,
+    "",
+    `**الإداري:** ${mention(message.author.id)}`,
+    `**Admin ID:** ${message.author.id}`,
+    "",
+    `**السيرفر:** ${trim(message.guild.name, 100)}`,
+    `**Guild ID:** ${message.guild.id}`,
+    "",
+    `**القناة:** ${channelMention(message.channelId)}`,
+    `**Channel ID:** ${message.channelId}`,
+    "",
+    `**التاريخ:** <t:${now()}:F>`
+  ];
+
+  for (const [key, value] of Object.entries(details)) {
+    lines.push(`**${key}:** ${trim(value, 500)}`);
+  }
+
+  await log(
+    message.guild,
+    category,
+    `📋 ${action} LOG`,
+    lines.join("\n")
+  );
+}
+
+/* =========================================
               TARGET RESOLVER
-========================================== */
+========================================= */
 
 async function getTarget(message, args) {
   const first = args[0];
@@ -342,11 +456,15 @@ async function getTarget(message, args) {
   return null;
 }
 
-/* ==========================================
-              PERMISSION CHECK
-========================================== */
+/* =========================================
+              PERMISSIONS
+========================================= */
 
-async function checkPermissions(message, permission, target = null) {
+async function checkPermissions(
+  message,
+  permission,
+  target = null
+) {
   const guild = message.guild;
 
   const admin = await guild.members
@@ -404,56 +522,11 @@ async function checkPermissions(message, permission, target = null) {
   return true;
 }
 
-/* ==========================================
-                 ACTION LOG
-========================================== */
-
-async function actionLog(
-  message,
-  category,
-  action,
-  target,
-  details = {}
-) {
-  const lines = [
-    `**الإجراء:** ${action}`,
-    `**النتيجة:** نجحت العملية`,
-    "",
-    `**العضو:** ${target?.id ? mention(target.id) : "غير متاح"}`,
-    `**User ID:** ${target?.id || "غير متاح"}`,
-    "",
-    `**الإداري:** ${mention(message.author.id)}`,
-    `**Admin ID:** ${message.author.id}`,
-    "",
-    `**السيرفر:** ${trim(message.guild.name, 100)}`,
-    `**Guild ID:** ${message.guild.id}`,
-    "",
-    `**القناة:** ${channelMention(message.channelId)}`,
-    `**Channel ID:** ${message.channelId}`,
-    "",
-    `**التاريخ:** <t:${now()}:F>`
-  ];
-
-  for (const [key, value] of Object.entries(details)) {
-    lines.push(`**${key}:** ${trim(value, 500)}`);
-  }
-
-  await log(
-    message.guild,
-    category,
-    `📋 ${action} LOG`,
-    lines.join("\n")
-  );
-}
-
-/* ==========================================
-               MASS MONITOR
-========================================== */
+/* =========================================
+              MASS MONITOR
+========================================= */
 
 async function trackAction(message, action, target) {
-  const guild = message.guild;
-  const admin = message.author;
-
   const time = Date.now();
 
   db.prepare(`
@@ -461,15 +534,16 @@ async function trackAction(message, action, target) {
     (guild, admin, target, action, status, created)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(
-    guild.id,
-    admin.id,
+    message.guild.id,
+    message.author.id,
     target?.id || null,
     action,
     "SUCCESS",
     time
   );
 
-  const key = `${guild.id}:${admin.id}:${action}`;
+  const key =
+    `${message.guild.id}:${message.author.id}:${action}`;
 
   const previous = adminActions.get(key) || [];
 
@@ -496,11 +570,11 @@ async function trackAction(message, action, target) {
   ) return;
 
   await log(
-    guild,
+    message.guild,
     "mass",
     "🚨 MASS ACTION ALERT",
-    `**الإداري:** ${mention(admin.id)}
-**Admin ID:** ${admin.id}
+    `**الإداري:** ${mention(message.author.id)}
+**Admin ID:** ${message.author.id}
 
 **الإجراء:** ${action}
 **عدد الأعضاء:** ${unique.size}
@@ -516,46 +590,43 @@ ${trim([...unique].map(id => `${mention(id)} (${id})`).join("\n"), 1800)}
   );
 }
 
-async function completed(
-  message,
-  {
-    text,
-    category,
-    action,
-    target,
-    details = {}
+async function completed(message, options) {
+  try {
+    await actionLog(
+      message,
+      options.category,
+      options.action,
+      options.target,
+      options.details || {}
+    );
+  } catch (error) {
+    console.error("ACTION LOG ERROR:", error.message);
   }
-) {
-  // اللوج منفصل عن إرسال رسالة النجاح
-  // حتى لا يؤدي فشل الرد إلى فقدان تسجيل العملية.
-  await actionLog(
-    message,
-    category,
-    action,
-    target,
-    details
-  );
 
   try {
-    await trackAction(message, action, target);
+    await trackAction(
+      message,
+      options.action,
+      options.target
+    );
   } catch (error) {
-    console.error("TRACK ACTION:", error.message);
+    console.error("TRACK ERROR:", error.message);
   }
 
-  await done(message, text).catch(error => {
-    console.error("SUCCESS MESSAGE:", error.message);
+  await done(message, options.text).catch(error => {
+    console.error("SUCCESS MESSAGE ERROR:", error.message);
   });
 }
 
-/* ==========================================
-                   COMMANDS
-========================================== */
+/* =========================================
+                 COMMANDS
+========================================= */
 
 const commands = {};
 
-/* ==========================================
+/* =========================================
                   TIMEOUT
-========================================== */
+========================================= */
 
 commands["تايم"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -564,14 +635,20 @@ commands["تايم"] = async (message, args) => {
     return fail(message, CONFIG.messages.invalid);
   }
 
-  const duration = parseDuration(
-    args[target.consumed],
+  const parsed = parseDurationArgs(
+    args,
+    target.consumed,
     CONFIG.defaultTimeout
   );
 
-  if (!duration || duration > CONFIG.maxTimeout) {
+  if (
+    !parsed ||
+    parsed.duration > CONFIG.maxTimeout
+  ) {
     return fail(message, CONFIG.messages.invalid);
   }
+
+  const duration = parsed.duration;
 
   if (!(await checkPermissions(
     message,
@@ -583,10 +660,8 @@ commands["تايم"] = async (message, args) => {
     return fail(message, CONFIG.messages.hierarchy);
   }
 
-  const durationProvided = args[target.consumed] !== undefined;
-
   const reason = args
-    .slice(target.consumed + (durationProvided ? 1 : 0))
+    .slice(parsed.reasonIndex)
     .join(" ") || "بدون سبب";
 
   await target.member.timeout(
@@ -605,14 +680,14 @@ commands["تايم"] = async (message, args) => {
     details: {
       "المدة": `${duration} دقيقة`,
       "السبب": reason,
-      "ينتهي": `<t:${Math.floor(Date.now() / 1000 + duration * 60)}:F>`
+      "ينتهي": `<t:${now() + duration * 60}:F>`
     }
   });
 };
 
-/* ==========================================
+/* =========================================
                     BAN
-========================================== */
+========================================= */
 
 commands["بان"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -657,9 +732,9 @@ commands["بان"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                    UNBAN
-========================================== */
+========================================= */
 
 commands["انبان"] = async (message, args) => {
   const id = args[0];
@@ -690,9 +765,9 @@ commands["انبان"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                  TEMP BAN
-========================================== */
+/* =========================================
+                 TEMP BAN
+========================================= */
 
 commands["تايم بان"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -701,14 +776,20 @@ commands["تايم بان"] = async (message, args) => {
     return fail(message, CONFIG.messages.invalid);
   }
 
-  const duration = parseDuration(
-    args[target.consumed],
+  const parsed = parseDurationArgs(
+    args,
+    target.consumed,
     CONFIG.defaultTempban
   );
 
-  if (!duration || duration > 5256000) {
+  if (
+    !parsed ||
+    parsed.duration > 5256000
+  ) {
     return fail(message, CONFIG.messages.invalid);
   }
+
+  const duration = parsed.duration;
 
   if (!(await checkPermissions(
     message,
@@ -721,26 +802,72 @@ commands["تايم بان"] = async (message, args) => {
   }
 
   const reason = args
-    .slice(target.consumed + 1)
+    .slice(parsed.reasonIndex)
     .join(" ") || "بدون سبب";
 
   const expires = Date.now() + duration * 60000;
+
+  // منع تحويل بان دائم موجود إلى بان مؤقت بالخطأ
+  const existingBan = await message.guild.bans
+    .fetch(target.id)
+    .catch(error => {
+      if (error.code === 10026) return null;
+      throw error;
+    });
+
+  if (existingBan) {
+    return fail(
+      message,
+      "العضو محظور بالفعل"
+    );
+  }
 
   await message.guild.members.ban(target.id, {
     reason
   });
 
-  db.prepare(`
-    INSERT OR REPLACE INTO tempbans
-    (guild, user, admin, reason, expires)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(
-    message.guild.id,
-    target.id,
-    message.author.id,
-    reason,
-    expires
-  );
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO tempbans
+      (guild, user, admin, reason, expires)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      message.guild.id,
+      target.id,
+      message.author.id,
+      reason,
+      expires
+    );
+  } catch (error) {
+    console.error("TEMPBAN SAVE ERROR:", error);
+
+    // الحظر نجح بالفعل، لكن الجدولة فشلت.
+    // نحاول التراجع بدل ترك بان مؤقت بدون موعد.
+    try {
+      await message.guild.members.unban(
+        target.id,
+        "Rollback: temporary ban database failure"
+      );
+    } catch (rollbackError) {
+      console.error(
+        "TEMPBAN ROLLBACK ERROR:",
+        rollbackError
+      );
+
+      await log(
+        message.guild,
+        "punishments",
+        "🚨 TEMPBAN DATABASE FAILURE",
+        `العضو: ${target.id}
+الإداري: ${message.author.id}
+
+الحظر نجح لكن حفظ موعد فكه فشل،
+وفشلت محاولة التراجع. يلزم تدخل إداري.`
+      );
+    }
+
+    return fail(message, CONFIG.messages.error);
+  }
 
   await completed(message, {
     text: format(CONFIG.messages.tempban, {
@@ -758,9 +885,9 @@ commands["تايم بان"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                     KICK
-========================================== */
+========================================= */
 
 commands["كيك"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -798,9 +925,9 @@ commands["كيك"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                   NICKNAME
-========================================== */
+/* =========================================
+                  NICKNAME
+========================================= */
 
 commands["نك"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -848,9 +975,9 @@ commands["نك"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                     CLEAR
-========================================== */
+========================================= */
 
 commands["مسح"] = async (message, args) => {
   if (!(await checkPermissions(
@@ -873,7 +1000,6 @@ commands["مسح"] = async (message, args) => {
   }
 
   const bot = await message.guild.members.fetchMe();
-
   const permissions = message.channel.permissionsFor(bot);
 
   if (!permissions?.has([
@@ -902,9 +1028,9 @@ commands["مسح"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                     JAIL
-========================================== */
+/* =========================================
+                    JAIL
+========================================= */
 
 commands["سجن"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -948,6 +1074,21 @@ commands["سجن"] = async (message, args) => {
     `Jailed by ${message.author.id}`
   );
 
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO jailed
+      (guild, user, admin, created)
+      VALUES (?, ?, ?, ?)
+    `).run(
+      message.guild.id,
+      target.id,
+      message.author.id,
+      Date.now()
+    );
+  } catch (error) {
+    console.error("JAIL DATABASE ERROR:", error);
+  }
+
   await completed(message, {
     text: format(CONFIG.messages.jail, {
       user: mention(target.id)
@@ -961,9 +1102,9 @@ commands["سجن"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                    UNJAIL
-========================================== */
+/* =========================================
+                   UNJAIL
+========================================= */
 
 commands["حريه"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1004,6 +1145,11 @@ commands["حريه"] = async (message, args) => {
     `Released by ${message.author.id}`
   );
 
+  db.prepare(`
+    DELETE FROM jailed
+    WHERE guild = ? AND user = ?
+  `).run(message.guild.id, target.id);
+
   await completed(message, {
     text: format(CONFIG.messages.unjail, {
       user: mention(target.id)
@@ -1017,9 +1163,9 @@ commands["حريه"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                   VOICE KICK
-========================================== */
+========================================= */
 
 commands["vk"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1051,9 +1197,9 @@ commands["vk"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                   VOICE MUTE
-========================================== */
+========================================= */
 
 commands["اسكت"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1085,9 +1231,9 @@ commands["اسكت"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                  VOICE UNMUTE
-========================================== */
+========================================= */
 
 commands["اكلمم"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1119,12 +1265,14 @@ commands["اكلمم"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                  TEXT MUTE
-========================================== */
+/* =========================================
+                   TEXT MUTE
+========================================= */
 
 async function getMuteRole(guild) {
-  let role = guild.roles.cache.find(
+  const roles = await guild.roles.fetch();
+
+  let role = roles.find(
     r => r.name === "RAGEL SADY MUTED"
   );
 
@@ -1196,7 +1344,11 @@ commands["اخرص"] = async (message, args) => {
     INSERT OR REPLACE INTO silenced
     (guild, user, role)
     VALUES (?, ?, ?)
-  `).run(message.guild.id, target.id, role.id);
+  `).run(
+    message.guild.id,
+    target.id,
+    role.id
+  );
 
   await completed(message, {
     text: format(CONFIG.messages.silence, {
@@ -1211,9 +1363,9 @@ commands["اخرص"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                 TEXT UNMUTE
-========================================== */
+/* =========================================
+                  TEXT UNMUTE
+========================================= */
 
 commands["ارغي"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1237,7 +1389,24 @@ commands["ارغي"] = async (message, args) => {
     return fail(message, CONFIG.messages.invalid);
   }
 
-  await target.member.roles.remove(record.role);
+  const role = await message.guild.roles
+    .fetch(record.role)
+    .catch(() => null);
+
+  if (!role) {
+    return fail(message, CONFIG.messages.error);
+  }
+
+  const bot = await message.guild.members.fetchMe();
+
+  if (
+    bot.roles.highest.comparePositionTo(role) <= 0 ||
+    !target.member.manageable
+  ) {
+    return fail(message, CONFIG.messages.hierarchy);
+  }
+
+  await target.member.roles.remove(role);
 
   db.prepare(`
     DELETE FROM silenced
@@ -1254,9 +1423,9 @@ commands["ارغي"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                    MOVE ME
-========================================== */
+/* =========================================
+                   MOVE ME
+========================================= */
 
 commands["انقلني"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1294,9 +1463,9 @@ commands["انقلني"] = async (message, args) => {
   });
 };
 
-/* ==========================================
+/* =========================================
                     WARN
-========================================== */
+========================================= */
 
 commands["وارن"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1341,9 +1510,9 @@ commands["وارن"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-               WARNINGS EMBED
-========================================== */
+/* =========================================
+                WARNINGS EMBED
+========================================= */
 
 commands["ورنات"] = async (message, args) => {
   const target = await getTarget(message, args);
@@ -1371,12 +1540,6 @@ commands["ورنات"] = async (message, args) => {
     );
   }
 
-  const member = target.member;
-
-  const avatar = member?.user.displayAvatarURL({
-    size: 256
-  });
-
   const totalPages = Math.ceil(warnings.length / 5);
 
   for (let page = 0; page < totalPages; page++) {
@@ -1387,18 +1550,22 @@ commands["ورنات"] = async (message, args) => {
 
     const embed = new EmbedBuilder()
       .setColor(CONFIG.color)
-      .setTitle(`⚠️ ورنات ${member?.user.username || target.id}`)
+      .setTitle("⚠️ RAGEL SADY WARNINGS")
       .setDescription(
-        `**العضو:** ${mention(target.id)}\n` +
+        `**ورنات:** ${mention(target.id)}\n` +
         `**عدد التحذيرات:** ${warnings.length}`
       )
       .setFooter({
-        text: `RAGEL SADY • ${page + 1}/${totalPages}`
+        text: `Page ${page + 1}/${totalPages}`
       })
       .setTimestamp();
 
-    if (avatar) {
-      embed.setThumbnail(avatar);
+    if (target.member?.user) {
+      embed.setThumbnail(
+        target.member.user.displayAvatarURL({
+          size: 256
+        })
+      );
     }
 
     pageWarnings.forEach((warn, index) => {
@@ -1416,28 +1583,25 @@ commands["ورنات"] = async (message, args) => {
       });
     });
 
+    const payload = {
+      embeds: [embed],
+      allowedMentions: {
+        parse: [],
+        repliedUser: false
+      }
+    };
+
     if (page === 0) {
-      await message.reply({
-        embeds: [embed],
-        allowedMentions: {
-          parse: [],
-          repliedUser: false
-        }
-      });
+      await message.reply(payload);
     } else {
-      await message.channel.send({
-        embeds: [embed],
-        allowedMentions: {
-          parse: []
-        }
-      });
+      await message.channel.send(payload);
     }
   }
 };
 
-/* ==========================================
-                    UNWARN
-========================================== */
+/* =========================================
+                   UNWARN
+========================================= */
 
 commands["انوارن"] = async (message, args) => {
   if (!(await checkPermissions(
@@ -1480,9 +1644,9 @@ commands["انوارن"] = async (message, args) => {
   });
 };
 
-/* ==========================================
-                  HELP!
-========================================== */
+/* =========================================
+                    HELP!
+========================================= */
 
 commands["help!"] = async message => {
   const embed = new EmbedBuilder()
@@ -1490,7 +1654,7 @@ commands["help!"] = async message => {
     .setTitle("RAGEL SADY _HELP")
     .addFields(
       {
-        name: "🛡️ ADMIN COMMANDS",
+        name: "🛡️ ADMIN",
         value:
           "`.تايم @عضو [دقائق]`\n" +
           "`.بان @عضو [سبب]`\n" +
@@ -1498,39 +1662,34 @@ commands["help!"] = async message => {
           "`.تايم بان @عضو [دقائق]`\n" +
           "`.كيك @عضو [سبب]`\n" +
           "`.نك @عضو الاسم`\n" +
-          "`.مسح عدد`",
-        inline: false
+          "`.مسح عدد`"
       },
       {
-        name: "🔒 JAIL COMMANDS",
+        name: "🔒 JAIL",
         value:
           "`.سجن @عضو`\n" +
-          "`.حريه @عضو`",
-        inline: false
+          "`.حريه @عضو`"
       },
       {
-        name: "🎙️ VOICE COMMANDS",
+        name: "🎙️ VOICE",
         value:
           "`.vk @عضو`\n" +
           "`.اسكت @عضو`\n" +
           "`.اكلمم @عضو`\n" +
-          "`.انقلني @عضو`",
-        inline: false
+          "`.انقلني @عضو`"
       },
       {
-        name: "💬 TEXT COMMANDS",
+        name: "💬 TEXT",
         value:
           "`.اخرص @عضو`\n" +
-          "`.ارغي @عضو`",
-        inline: false
+          "`.ارغي @عضو`"
       },
       {
-        name: "⚠️ WARNING COMMANDS",
+        name: "⚠️ WARNINGS",
         value:
           "`.وارن @عضو السبب`\n" +
           "`.انوارن رقم`\n" +
-          "`.ورنات @عضو`",
-        inline: false
+          "`.ورنات @عضو`"
       }
     );
 
@@ -1543,9 +1702,9 @@ commands["help!"] = async message => {
   });
 };
 
-/* ==========================================
-               COMMAND HANDLER
-========================================== */
+/* =========================================
+              COMMAND HANDLER
+========================================= */
 
 client.on("messageCreate", async message => {
   if (!message.guild || message.author.bot) return;
@@ -1580,7 +1739,6 @@ client.on("messageCreate", async message => {
 
   try {
     await command(message, parts);
-
   } catch (error) {
     console.error(
       `COMMAND ERROR [${commandName}]:`,
@@ -1594,9 +1752,9 @@ client.on("messageCreate", async message => {
   }
 });
 
-/* ==========================================
-                INVITE SYSTEM
-========================================== */
+/* =========================================
+               INVITE TRACKING
+========================================= */
 
 async function cacheInvites(guild) {
   try {
@@ -1614,7 +1772,6 @@ async function cacheInvites(guild) {
         ])
       )
     );
-
   } catch (error) {
     console.error("INVITE CACHE:", error.message);
   }
@@ -1658,7 +1815,6 @@ async function detectInvite(guild) {
       uses: invite.uses,
       inviterId: invite.inviterId || old.inviterId
     };
-
   } catch (error) {
     console.error("INVITE DETECTION:", error.message);
     return null;
@@ -1677,9 +1833,9 @@ client.on("inviteDelete", async invite => {
   }
 });
 
-/* ==========================================
+/* =========================================
                    WELCOME
-========================================== */
+========================================= */
 
 client.on("guildMemberAdd", async member => {
   try {
@@ -1751,9 +1907,9 @@ ${inviteInfo}`
   );
 });
 
-/* ==========================================
+/* =========================================
                  MEMBER LEAVE
-========================================== */
+========================================= */
 
 client.on("guildMemberRemove", async member => {
   await log(
@@ -1770,9 +1926,9 @@ client.on("guildMemberRemove", async member => {
   );
 });
 
-/* ==========================================
-                MESSAGE DELETE
-========================================== */
+/* =========================================
+               MESSAGE DELETE
+========================================= */
 
 client.on("messageDelete", async message => {
   if (!message.guild) return;
@@ -1803,9 +1959,9 @@ ${trim(attachments, 700)}
   );
 });
 
-/* ==========================================
+/* =========================================
                 MESSAGE UPDATE
-========================================== */
+========================================= */
 
 client.on("messageUpdate", async (
   oldMessage,
@@ -1836,9 +1992,9 @@ ${trim(newMessage.content, 1000)}
   );
 });
 
-/* ==========================================
-             ROLES AND NICKNAMES
-========================================== */
+/* =========================================
+              ROLES / NICKNAMES
+========================================= */
 
 client.on("guildMemberUpdate", async (
   oldMember,
@@ -1904,9 +2060,9 @@ client.on("guildMemberUpdate", async (
   }
 });
 
-/* ==========================================
-                  VOICE LOG
-========================================== */
+/* =========================================
+                  VOICE LOGS
+========================================= */
 
 client.on("voiceStateUpdate", async (
   oldState,
@@ -1972,9 +2128,9 @@ ${changes.join("\n")}
   );
 });
 
-/* ==========================================
+/* =========================================
                  CHANNEL LOGS
-========================================== */
+========================================= */
 
 client.on("channelCreate", async channel => {
   if (!channel.guild) return;
@@ -2059,9 +2215,9 @@ ${changes.join("\n")}
   );
 });
 
-/* ==========================================
+/* =========================================
                TEMPBAN SCHEDULER
-========================================== */
+========================================= */
 
 let checkingTempbans = false;
 
@@ -2129,9 +2285,9 @@ async function checkTempbans() {
   }
 }
 
-/* ==========================================
+/* =========================================
                    CLEANUP
-========================================== */
+========================================= */
 
 setInterval(() => {
   const time = Date.now();
@@ -2154,18 +2310,79 @@ setInterval(() => {
     }
   }
 
-  db.prepare(`
-    DELETE FROM actions
-    WHERE created < ?
-  `).run(time - 30 * 24 * 60 * 60 * 1000);
+  try {
+    db.prepare(`
+      DELETE FROM actions
+      WHERE created < ?
+    `).run(time - 30 * 24 * 60 * 60 * 1000);
+  } catch (error) {
+    console.error("DATABASE CLEANUP:", error.message);
+  }
 
 }, 30000);
 
-/* ==========================================
-                    READY
-========================================== */
+/* =========================================
+              STARTUP MESSAGE
+========================================= */
 
-client.once("ready", async () => {
+async function sendStartupMessage(guild) {
+  try {
+    const botMember = await guild.members.fetchMe();
+
+    if (!botMember.roles.cache.has(CONFIG.botRole)) {
+      console.warn(
+        `BOT ROLE NOT FOUND: ${CONFIG.botRole}`
+      );
+    }
+
+    const channel = await guild.channels
+      .fetch(CONFIG.startupChannel)
+      .catch(() => null);
+
+    if (!channel?.isTextBased()) {
+      console.error("STARTUP CHANNEL UNAVAILABLE");
+      return;
+    }
+
+    const permissions = channel.permissionsFor(botMember);
+
+    if (!permissions?.has([
+      P.ViewChannel,
+      P.SendMessages,
+      P.EmbedLinks
+    ])) {
+      console.error(
+        "STARTUP MESSAGE: Missing channel permissions"
+      );
+      return;
+    }
+
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(CONFIG.color)
+          .setDescription("انا جيت")
+      ],
+      allowedMentions: {
+        parse: []
+      }
+    });
+
+    console.log("STARTUP MESSAGE SENT");
+
+  } catch (error) {
+    console.error(
+      "STARTUP MESSAGE ERROR:",
+      error.message
+    );
+  }
+}
+
+/* =========================================
+                   READY
+========================================= */
+
+client.once("clientReady", async () => {
   console.log(`
 ╔════════════════════════════════════╗
 ║                                    ║
@@ -2180,10 +2397,17 @@ Servers: ${client.guilds.cache.size}
 Commands: ${Object.keys(commands).length}
 Prefix: .
 Help: .help!
+Database: SQLite
   `);
 
   client.user.setActivity(".help! | RAGEL SADY");
 
+  // إرسال "انا جيت" عند التشغيل
+  for (const guild of client.guilds.cache.values()) {
+    await sendStartupMessage(guild);
+  }
+
+  // تحميل الدعوات
   for (const guild of client.guilds.cache.values()) {
     await cacheInvites(guild);
   }
@@ -2197,9 +2421,9 @@ client.on("guildCreate", async guild => {
   await cacheInvites(guild);
 });
 
-/* ==========================================
-                ERROR HANDLING
-========================================== */
+/* =========================================
+               ERROR HANDLING
+========================================= */
 
 client.on("error", error => {
   console.error("CLIENT ERROR:", error);
@@ -2209,8 +2433,8 @@ process.on("unhandledRejection", error => {
   console.error("UNHANDLED REJECTION:", error);
 });
 
-/* ==========================================
+/* =========================================
                     LOGIN
-========================================== */
+========================================= */
 
 client.login(TOKEN);
