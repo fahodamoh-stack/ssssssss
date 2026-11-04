@@ -2716,4 +2716,5 @@ try {
 } catch (error) {
   console.error("WELCOME GIF SETUP ERROR:", error);
 }
+require("./emoSystem")(client, db);
 client.login(TOKEN);
