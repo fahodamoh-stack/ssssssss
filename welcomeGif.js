@@ -406,17 +406,64 @@ async function createWelcomeGif(member) {
 // ============================================================
 
 function welcomePayload(member, gifBuffer, filename) {
+  const avatarUrl = member.displayAvatarURL({
+    extension: "png",
+    size: 256,
+    forceStatic: true,
+  });
+
   return {
-    content: [
-      `Welcome to Milan <@${member.id}>`,
-      `Please read rules <#${config.rulesChannelId}>`,
-      `Chat with ppl <#${config.chatChannelId}>`,
-    ].join("\n"),
+    // IS_COMPONENTS_V2
+    flags: 32768,
+
+    components: [
+      {
+        // Container
+        type: 17,
+        accent_color: 0x203234,
+        components: [
+          {
+            // Section: welcome text beside the member's avatar
+            type: 9,
+            components: [
+              {
+                // Text Display
+                type: 10,
+                content: [
+                  `### Welcome <@${member.id}> to Milan!`,
+                  `Please read the rules <#${config.rulesChannelId}>`,
+                  `Talk with ppl here <#${config.chatChannelId}>`,
+                ].join("\n"),
+              },
+            ],
+            accessory: {
+              // Thumbnail
+              type: 11,
+              media: { url: avatarUrl },
+              description: "Member avatar",
+            },
+          },
+          {
+            // Divider between text and GIF
+            type: 14,
+            divider: true,
+            spacing: 1,
+          },
+          {
+            // Media Gallery
+            type: 12,
+            items: [
+              {
+                media: { url: `attachment://${filename}` },
+              },
+            ],
+          },
+        ],
+      },
+    ],
 
     files: [
-      new AttachmentBuilder(gifBuffer, {
-        name: filename,
-      }),
+      new AttachmentBuilder(gifBuffer, { name: filename }),
     ],
 
     allowedMentions: {
@@ -425,7 +472,6 @@ function welcomePayload(member, gifBuffer, filename) {
     },
   };
 }
-
 // ============================================================
 // EVENTS AND TEST COMMAND
 // ============================================================
@@ -437,9 +483,9 @@ module.exports = function registerWelcomeGif(client) {
   client.on(Events.MessageCreate, async message => {
     if (!message.guild || message.author.bot) return;
 
-    if (
-      message.content.trim().toLowerCase() !== ".wlctest"
-    ) {
+    const testCommand = message.content.trim().toLowerCase();
+
+    if (testCommand !== ".wlctest" && testCommand !== ".wl.5") {
       return;
     }
 
@@ -476,24 +522,30 @@ module.exports = function registerWelcomeGif(client) {
     testCooldown.set(message.guild.id, now);
     // WLC TEST DM
     // Run separately so a DM error does not stop the GIF test.
-    Promise.resolve()
-      .then(() => require("./welcomeDm")(message.member))
-      .catch(error => {
-        console.error("WELCOME DM TEST ERROR:", error);
-      });
+    if (testCommand === ".wlctest") {
+      Promise.resolve()
+        .then(() => require("./welcomeDm")(message.member))
+        .catch(error => {
+          console.error("WELCOME DM TEST ERROR:", error);
+        });
+    }
 
     try {
       const gifBuffer = await createWelcomeGif(
         message.member
       );
 
-      await message.channel.send(
-        welcomePayload(
-          message.member,
-          gifBuffer,
-          `welcome-test-${message.author.id}.gif`
-        )
-      );
+      const count = testCommand === ".wl.5" ? 5 : 1;
+
+      for (let i = 0; i < count; i++) {
+        await message.channel.send(
+          welcomePayload(
+            message.member,
+            gifBuffer,
+            `welcome-test-${message.author.id}-${i + 1}.gif`
+          )
+        );
+      }
     } catch (error) {
       console.error("WELCOME GIF TEST ERROR:", error);
 
