@@ -29,7 +29,7 @@ const CONFIG = {
 
   jailRole: "1563059391127621702",
 
-  welcome: "1560996836808855593",
+  welcome: "1567429021707538562",
 
   logs: {
     members: "1560996893499334697",
@@ -1579,6 +1579,12 @@ client.on(Events.MessageCreate, async message => {
 // ============================================================
 
 client.on(Events.GuildMemberAdd, async member => {
+  // WELCOME DM IMAGE
+  Promise.resolve()
+    .then(() => require("./welcomeDm")(member))
+    .catch(error => {
+      console.error("WELCOME DM SETUP ERROR:", error);
+    });
   try {
     const channel = await member.guild.channels
       .fetch(CONFIG.welcome)
@@ -1595,9 +1601,25 @@ client.on(Events.GuildMemberAdd, async member => {
 
       if (url) e.setThumbnail(url);
 
-      await channel.send({
-        embeds: [e],
-      }).catch(console.error);
+      try {
+        const welcomeGif = require("./welcomeGif");
+        const payload = await welcomeGif.createPayload(
+          member,
+          `welcome-${member.id}.gif`
+        );
+
+        payload.embeds = [e];
+
+        await channel.send(payload);
+      } catch (error) {
+        console.error("WELCOME GIF ERROR:", error);
+
+        // Keep the original welcome message available if GIF generation fails.
+        await channel.send({
+          embeds: [e],
+          allowedMentions: { parse: [] },
+        }).catch(console.error);
+      }
     }
 
     await sendLog(
@@ -2694,4 +2716,10 @@ client.on(Events.Error, error => {
 // LOGIN
 // ============================================================
 
+// WELCOME GIF
+try {
+  require("./welcomeGif")(client);
+} catch (error) {
+  console.error("WELCOME GIF SETUP ERROR:", error);
+}
 client.login(TOKEN);
