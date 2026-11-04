@@ -1591,16 +1591,6 @@ client.on(Events.GuildMemberAdd, async member => {
       .catch(() => null);
 
     if (channel?.isTextBased()) {
-      const e = new EmbedBuilder()
-        .setColor(CONFIG.colors.red)
-        .setDescription(
-          `𝐖𝐄𝐋𝐂𝐎𝐌𝐄 ⋆. 𐙚˚࿔ ${mention(member.id)} 𝜗𝜚˚⋆`
-        );
-
-      const url = avatar(member.user);
-
-      if (url) e.setThumbnail(url);
-
       try {
         const welcomeGif = require("./welcomeGif");
         const payload = await welcomeGif.createPayload(
@@ -1608,20 +1598,24 @@ client.on(Events.GuildMemberAdd, async member => {
           `welcome-${member.id}.gif`
         );
 
-        payload.embeds = [e];
-
         await channel.send(payload);
       } catch (error) {
         console.error("WELCOME GIF ERROR:", error);
 
-        // Keep the original welcome message available if GIF generation fails.
+        // Fallback if the GIF or embed could not be sent.
         await channel.send({
-          embeds: [e],
-          allowedMentions: { parse: [] },
+          content: [
+            `Welcome <@${member.id}> to Milan!`,
+            `Please read the rules <#1539365749418762311>`,
+            `Talk with ppl here <#1560996836808855593>`,
+          ].join("\n"),
+          allowedMentions: {
+            parse: [],
+            users: [member.id],
+          },
         }).catch(console.error);
       }
     }
-
     await sendLog(
       member.guild,
       "members",
