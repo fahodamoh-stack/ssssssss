@@ -1,0 +1,769 @@
+========== milanRps.js ==========
+"use strict";
+
+const { Events, MessageFlags } = require("discord.js");
+const { randomInt } = require("node:crypto");
+
+module.exports = function registerMilanRps(client) {
+  const CHOICES = {
+    rock: {
+      label: "\u062d\u062c\u0631",
+      emoji: "\u{1FAA8}",
+      beats: "scissors",
+    },
+    paper: {
+      label: "\u0648\u0631\u0642\u0629",
+      emoji: "\u{1F4C4}",
+      beats: "rock",
+    },
+    scissors: {
+      label: "\u0645\u0642\u0635",
+      emoji: "\u2702\uFE0F",
+      beats: "paper",
+    },
+  };
+
+  const TIMEOUT_MS = 60_000;
+  const active = new Set();
+
+  function button(id, label, emoji, disabled = false) {
+    return {
+      type: 2,
+      style: 2,
+      custom_id: id,
+      label,
+      emoji: { name: emoji },
+      disabled,
+    };
+  }
+
+  function payload(ownerId, gameId, text, disabled = false) {
+    return {
+      flags: MessageFlags.IsComponentsV2,
+      components: [{
+        type: 17,
+        accent_color: 0x203234,
+        components: [
+          {
+            type: 10,
+            content: "### \u{1F3AE} MILAN \u2022 ROCK PAPER SCISSORS",
+          },
+          { type: 14, divider: true, spacing: 1 },
+          {
+            type: 10,
+            content: `<@${ownerId}>\n${text}`,
+          },
+          {
+            type: 1,
+            components: [
+              button(`milan_rps:${gameId}:rock`, CHOICES.rock.label, CHOICES.rock.emoji, disabled),
+              button(`milan_rps:${gameId}:paper`, CHOICES.paper.label, CHOICES.paper.emoji, disabled),
+              button(`milan_rps:${gameId}:scissors`, CHOICES.scissors.label, CHOICES.scissors.emoji, disabled),
+            ],
+          },
+        ],
+      }],
+      allowedMentions: { parse: [], repliedUser: false },
+      failIfNotExists: false,
+    };
+  }
+
+  client.on(Events.MessageCreate, async message => {
+    if (!message.guild || message.author.bot || message.webhookId) return;
+    if ((message.content || "").trim().toLowerCase() !== ".rps") return;
+
+    const ownerId = message.author.id;
+    const key = `${message.guild.id}:${ownerId}`;
+
+    if (active.has(key)) {
+      await message.reply({
+        content: "\u0639\u0646\u062f\u0643 \u0644\u0639\u0628\u0629 \u0634\u063a\u0627\u0644\u0629 \u0628\u0627\u0644\u0641\u0639\u0644.",
+        allowedMentions: { parse: [], repliedUser: false },
+        failIfNotExists: false,
+      }).catch(console.error);
+      return;
+    }
+
+    active.add(key);
+    const gameId = message.id;
+    let gameMessage;
+
+    try {
+      gameMessage = await message.reply(payload(
+        ownerId,
+        gameId,
+        "\u0627\u062e\u062a\u0627\u0631 \u062d\u062c\u0631 \u0623\u0648 \u0648\u0631\u0642\u0629 \u0623\u0648 \u0645\u0642\u0635. \u0645\u0639\u0627\u0643 60 \u062b\u0627\u0646\u064a\u0629."
+      ));
+
+      const collector = gameMessage.createMessageComponentCollector({
+        time: TIMEOUT_MS,
+      });
+
+      let completed = false;
+
+      collector.on("collect", async interaction => {
+        try {
+          if (interaction.user.id !== ownerId) {
+            await interaction.reply({
+              content: "\u0627\u0644\u0644\u0639\u0628\u0629 \u062f\u064a \u0645\u0634 \u0644\u064a\u0643. \u0627\u0643\u062a\u0628 `.rps` \u0639\u0634\u0627\u0646 \u062a\u0644\u0639\u0628.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const prefix = `milan_rps:${gameId}:`;
+          if (!interaction.customId.startsWith(prefix)) return;
+
+          const playerChoice = interaction.customId.slice(prefix.length);
+          if (!Object.hasOwn(CHOICES, playerChoice)) return;
+
+          // Prevent two rapid button presses from settling twice.
+          if (completed) {
+            await interaction.deferUpdate().catch(() => {});
+            return;
+          }
+          completed = true;
+
+          const keys = Object.keys(CHOICES);
+          const botChoice = keys[randomInt(keys.length)];
+          const player = CHOICES[playerChoice];
+          const bot = CHOICES[botChoice];
+
+          let result;
+          if (playerChoice === botChoice) {
+            result = "\u{1F91D} **\u062a\u0639\u0627\u062f\u0644!**";
+          } else if (player.beats === botChoice) {
+            result = "\u{1F389} **\u0627\u0646\u062a \u0643\u0633\u0628\u062a!**";
+          } else {
+            result = "\u{1F916} **\u0627\u0644\u0628\u0648\u062a \u0643\u0633\u0628!**";
+          }
+
+          const text = [
+            `\u0627\u062e\u062a\u064a\u0627\u0631\u0643: ${player.emoji} **${player.label}**`,
+            `\u0627\u062e\u062a\u064a\u0627\u0631 \u0627\u0644\u0628\u0648\u062a: ${bot.emoji} **${bot.label}**`,
+            "",
+            result,
+          ].join("\n");
+
+          const next = payload(ownerId, gameId, text, true);
+          // failIfNotExists is for replies, not interaction updates.
+          delete next.failIfNotExists;
+          await interaction.update(next);
+          collector.stop("completed");
+        } catch (error) {
+          console.error("RPS INTERACTION ERROR:", error);
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: "\u062d\u0635\u0644 \u062e\u0637\u0623 \u0641\u064a \u0627\u0644\u0644\u0639\u0628\u0629.",
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+          }
+          collector.stop("error");
+        }
+      });
+
+      collector.on("end", async (_collected, reason) => {
+        active.delete(key);
+
+        if (reason === "completed") return;
+
+        try {
+          const next = payload(
+            ownerId,
+            gameId,
+            reason === "time"
+              ? "\u23F3 \u0627\u0646\u062a\u0647\u0649 \u0627\u0644\u0648\u0642\u062a. \u0627\u0643\u062a\u0628 `.rps` \u0639\u0634\u0627\u0646 \u062a\u0644\u0639\u0628 \u062a\u0627\u0646\u064a."
+              : "\u0627\u062a\u0642\u0641\u0644\u062a \u0627\u0644\u0644\u0639\u0628\u0629 \u0628\u0633\u0628\u0628 \u062e\u0637\u0623.",
+            true
+          );
+          delete next.failIfNotExists;
+          await gameMessage.edit(next);
+        } catch (error) {
+          console.error("RPS END ERROR:", error);
+        }
+      });
+    } catch (error) {
+      active.delete(key);
+      console.error("RPS START ERROR:", error);
+      await message.reply({
+        content: "\u0645\u0634 \u0642\u0627\u062f\u0631 \u0623\u0628\u062f\u0623 \u0627\u0644\u0644\u0639\u0628\u0629. \u0631\u0627\u062c\u0639 \u0644\u0648\u062c \u0627\u0644\u0628\u0648\u062a.",
+        allowedMentions: { parse: [], repliedUser: false },
+        failIfNotExists: false,
+      }).catch(() => {});
+    }
+  });
+
+  console.log("MILAN RPS LOADED");
+};
+
+========== milanXO.js ==========
+"use strict";
+
+const { Events, MessageFlags } = require("discord.js");
+const { randomInt } = require("node:crypto");
+
+module.exports = function registerMilanXO(client, db) {
+  const LOG_CHANNEL = "1566559654924914728";
+  const COIN = "";
+  const MAX_BALANCE = 1_000_000_000;
+  const JOIN_MS = 15_000;
+  const TURN_MS = 60_000;
+  const FLAG = MessageFlags.IsComponentsV2;
+  const games = new Map();
+  const lines = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6],
+  ];
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS milan_xo_escrow (
+      game_id TEXT PRIMARY KEY,
+      guild TEXT NOT NULL,
+      player_x TEXT NOT NULL,
+      player_o TEXT NOT NULL,
+      stake INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      winner TEXT,
+      created_at INTEGER NOT NULL,
+      settled_at INTEGER
+    );
+  `);
+
+  const walletExists = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name = 'fizzy_wallets'
+  `).get();
+
+  if (!walletExists) {
+    throw new Error("XO requires fizzy_wallets. Register economy before XO.");
+  }
+
+  const wallet = db.prepare(`
+    SELECT balance FROM fizzy_wallets WHERE guild = ? AND user = ?
+  `);
+
+  const ensure = db.prepare(`
+    INSERT OR IGNORE INTO fizzy_wallets (guild, user) VALUES (?, ?)
+  `);
+
+  const debit = db.prepare(`
+    UPDATE fizzy_wallets SET balance = balance - ?
+    WHERE guild = ? AND user = ? AND balance >= ?
+  `);
+
+  const credit = db.prepare(`
+    UPDATE fizzy_wallets SET balance = balance + ?
+    WHERE guild = ? AND user = ?
+  `);
+
+  const insertEscrow = db.prepare(`
+    INSERT INTO milan_xo_escrow
+      (game_id, guild, player_x, player_o, stake, status, created_at)
+    VALUES (?, ?, ?, ?, ?, 'held', ?)
+  `);
+
+  const escrowById = db.prepare(`
+    SELECT * FROM milan_xo_escrow WHERE game_id = ?
+  `);
+
+  const closeEscrow = db.prepare(`
+    UPDATE milan_xo_escrow
+    SET status = ?, winner = ?, settled_at = ?
+    WHERE game_id = ? AND status = 'held'
+  `);
+
+  function transaction(fn) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw error;
+    }
+  }
+
+  function settle(id, winner) {
+    return transaction(() => {
+      const row = escrowById.get(id);
+      if (!row || row.status !== "held") return null;
+
+      ensure.run(row.guild, row.player_x);
+      ensure.run(row.guild, row.player_o);
+
+      // A payout that would exceed the economy cap becomes a full refund.
+      let actualWinner = winner;
+      if (actualWinner) {
+        const current = wallet.get(row.guild, actualWinner).balance;
+        if (current + row.stake * 2 > MAX_BALANCE) actualWinner = null;
+      }
+
+      if (actualWinner) {
+        credit.run(row.stake * 2, row.guild, actualWinner);
+      } else {
+        credit.run(row.stake, row.guild, row.player_x);
+        credit.run(row.stake, row.guild, row.player_o);
+      }
+
+      closeEscrow.run(
+        actualWinner ? "won" : "refunded",
+        actualWinner,
+        Date.now(),
+        id
+      );
+
+      return { row, winner: actualWinner };
+    });
+  }
+
+  // Refund unfinished player-vs-player games after restart.
+  const pending = db.prepare(`
+    SELECT game_id FROM milan_xo_escrow WHERE status = 'held'
+  `).all();
+
+  for (const row of pending) {
+    settle(row.game_id, null);
+  }
+
+  if (pending.length) {
+    console.log(`XO refunded ${pending.length} unfinished game(s).`);
+  }
+
+  function winnerOf(board) {
+    for (const [a, b, c] of lines) {
+      if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+        return board[a];
+      }
+    }
+    return board.every(Boolean) ? "draw" : null;
+  }
+
+  function minimax(board, turn, depth) {
+    const result = winnerOf(board);
+    if (result === "O") return 10 - depth;
+    if (result === "X") return depth - 10;
+    if (result === "draw") return 0;
+
+    const scores = [];
+    for (let i = 0; i < 9; i++) {
+      if (board[i]) continue;
+      board[i] = turn;
+      scores.push(minimax(board, turn === "O" ? "X" : "O", depth + 1));
+      board[i] = "";
+    }
+
+    return turn === "O" ? Math.max(...scores) : Math.min(...scores);
+  }
+
+  function botMove(board) {
+    let best = -Infinity;
+    let choices = [];
+
+    for (let i = 0; i < 9; i++) {
+      if (board[i]) continue;
+      board[i] = "O";
+      const score = minimax(board, "X", 0);
+      board[i] = "";
+
+      if (score > best) {
+        best = score;
+        choices = [i];
+      } else if (score === best) {
+        choices.push(i);
+      }
+    }
+
+    return choices[randomInt(choices.length)];
+  }
+
+  function panel(text, color = 0x203234) {
+    return {
+      flags: FLAG,
+      components: [{
+        type: 17,
+        accent_color: color,
+        components: [
+          { type: 10, content: "### MILAN • XO" },
+          { type: 14, divider: true, spacing: 1 },
+          { type: 10, content: text },
+        ],
+      }],
+      allowedMentions: { parse: [], repliedUser: false },
+    };
+  }
+
+  function gamePayload(game, text, disabled = false) {
+    const components = [
+      { type: 10, content: "### MILAN • XO" },
+      { type: 14, divider: true, spacing: 1 },
+      { type: 10, content: text },
+    ];
+
+    for (let row = 0; row < 3; row++) {
+      const buttons = [];
+
+      for (let col = 0; col < 3; col++) {
+        const i = row * 3 + col;
+        const mark = game.board[i];
+
+        buttons.push({
+          type: 2,
+          style: mark === "X" ? 1 : mark === "O" ? 3 : 2,
+          custom_id: `milan_xo:${game.id}:${i}`,
+          label: mark || "\u200b",
+          disabled: disabled || Boolean(mark),
+        });
+      }
+
+      components.push({ type: 1, components: buttons });
+    }
+
+    return {
+      flags: FLAG,
+      components: [{
+        type: 17,
+        accent_color: 0x203234,
+        components,
+      }],
+      allowedMentions: { parse: [], repliedUser: false },
+    };
+  }
+
+  async function logSettlement(guild, result, reason) {
+    if (!result) return;
+    try {
+      const channel = await guild.channels.fetch(LOG_CHANNEL);
+      if (!channel?.isTextBased() || !channel.send) return;
+
+      const row = result.row;
+      const outcome = result.winner
+        ? `Winner: <@${result.winner}>\nPayout: ${row.stake * 2} Coin`
+        : "Both stakes refunded.";
+
+      await channel.send(panel(
+        `**XO transaction**\n` +
+        `Game: \`${row.game_id}\`\n` +
+        `Players: <@${row.player_x}> / <@${row.player_o}>\n` +
+        `Stake per player: ${row.stake} Coin\n` +
+        `${outcome}\nReason: ${reason}`
+      ));
+    } catch (error) {
+      console.error("XO LOG ERROR:", error);
+    }
+  }
+
+  client.on(Events.MessageCreate, async message => {
+    if (!message.guild || message.author.bot || message.webhookId) return;
+
+    const parts = (message.content || "").trim().split(/\s+/);
+    if (parts[0]?.toLowerCase() !== ".xo") return;
+
+    if (parts.length !== 2 || !/^[1-9]\d*$/.test(parts[1])) {
+      await message.reply({
+        ...panel(`Usage: \`.xo 100\`\nMinimum stake: ${COIN} 100 Coin.`),
+        failIfNotExists: false,
+      }).catch(console.error);
+      return;
+    }
+
+    const stake = Number(parts[1]);
+    if (!Number.isSafeInteger(stake) || stake < 100 || stake > MAX_BALANCE / 2) {
+      await message.reply({
+        ...panel(`Stake must be between 100 and ${MAX_BALANCE / 2} Coin.`),
+        failIfNotExists: false,
+      }).catch(console.error);
+      return;
+    }
+
+    const game = {
+      id: message.id,
+      guild: message.guild.id,
+      x: message.author.id,
+      o: null,
+      stake,
+      board: Array(9).fill(""),
+      turn: "X",
+      state: "waiting",
+      busy: false,
+      timer: null,
+      collector: null,
+      msg: null,
+    };
+
+    const waitingPayload = {
+      ...panel(
+        `<@${game.x}> started an XO game.\n` +
+        `${COIN} Stake: **${stake} Coin per player**\n` +
+        `Join within **15 seconds**, or play the bot for free.`
+      ),
+      failIfNotExists: false,
+    };
+
+    waitingPayload.components[0].components.push({
+      type: 1,
+      components: [{
+        type: 2,
+        style: 2,
+        custom_id: `milan_xo:${game.id}:join`,
+        label: "Join",
+      }],
+    });
+
+    try {
+      game.msg = await message.reply(waitingPayload);
+      games.set(game.id, game);
+
+      game.collector = game.msg.createMessageComponentCollector({
+        time: JOIN_MS + 20 * TURN_MS,
+      });
+
+      function cancelTimer() {
+        if (game.timer) clearTimeout(game.timer);
+        game.timer = null;
+      }
+
+      async function finish(text, winner, reason) {
+        if (game.state === "ended") return;
+        game.state = "ended";
+        cancelTimer();
+
+        const result = settle(game.id, winner);
+
+        if (result && winner && !result.winner) {
+          text += "\nPayout exceeded the balance limit; both stakes refunded.";
+        }
+
+        await game.msg.edit(gamePayload(game, text, true)).catch(console.error);
+        await logSettlement(message.guild, result, reason);
+        game.collector.stop("finished");
+      }
+
+      function startTurnTimer() {
+        cancelTimer();
+        game.timer = setTimeout(() => {
+          void finish(
+            " Time expired. Any held stakes were refunded.",
+            null,
+            "turn timeout"
+          ).catch(console.error);
+        }, TURN_MS);
+      }
+
+      game.timer = setTimeout(async () => {
+        if (game.state !== "waiting") return;
+        game.state = "bot";
+        game.o = "bot";
+        game.turn = "X";
+
+        await game.msg.edit(gamePayload(
+          game,
+          `<@${game.x}> vs  Bot\nFree game — no Coin at risk.\nYour turn: **X**`
+        )).catch(console.error);
+
+        startTurnTimer();
+      }, JOIN_MS);
+
+      game.collector.on("collect", async interaction => {
+        if (!interaction.isButton()) return;
+        const prefix = `milan_xo:${game.id}:`;
+        if (!interaction.customId.startsWith(prefix)) return;
+
+        if (game.busy) {
+          await interaction.reply({
+            content: "Please wait for the current move.",
+            flags: MessageFlags.Ephemeral,
+          }).catch(() => {});
+          return;
+        }
+
+        game.busy = true;
+
+        try {
+          const action = interaction.customId.slice(prefix.length);
+
+          if (action === "join") {
+            if (game.state !== "waiting") {
+              await interaction.reply({
+                content: "This game has already started.",
+                flags: MessageFlags.Ephemeral,
+              });
+              return;
+            }
+
+            if (interaction.user.id === game.x || interaction.user.bot) {
+              await interaction.reply({
+                content: "Another member must join.",
+                flags: MessageFlags.Ephemeral,
+              });
+              return;
+            }
+
+            const opponent = interaction.user.id;
+
+            const held = transaction(() => {
+              ensure.run(game.guild, game.x);
+              ensure.run(game.guild, opponent);
+
+              const xBalance = wallet.get(game.guild, game.x).balance;
+              const oBalance = wallet.get(game.guild, opponent).balance;
+
+              if (xBalance < stake) return "creator";
+              if (oBalance < stake) return "opponent";
+
+              // Ensure either possible winner can receive the full pot.
+              if (xBalance - stake + stake * 2 > MAX_BALANCE ||
+                  oBalance - stake + stake * 2 > MAX_BALANCE) return "cap";
+
+              debit.run(stake, game.guild, game.x, stake);
+              debit.run(stake, game.guild, opponent, stake);
+              insertEscrow.run(
+                game.id, game.guild, game.x, opponent, stake, Date.now()
+              );
+              return "ok";
+            });
+
+            if (held !== "ok") {
+              await interaction.reply({
+                content: held === "creator"
+                  ? "The creator does not have enough saved Coin."
+                  : held === "opponent"
+                  ? "You do not have enough saved Coin."
+                  : "A possible payout would exceed the balance limit.",
+                flags: MessageFlags.Ephemeral,
+              });
+              return;
+            }
+
+            cancelTimer();
+            game.o = opponent;
+            game.state = "pvp";
+            game.turn = "X";
+
+            await interaction.update(gamePayload(
+              game,
+              `<@${game.x}> **X** vs <@${game.o}> **O**\n` +
+              `${COIN} Pot: **${stake * 2} Coin**\n` +
+              `Turn: <@${game.x}>`
+            ));
+
+            startTurnTimer();
+            return;
+          }
+
+          if (!["pvp", "bot"].includes(game.state)) {
+            await interaction.reply({
+              content: "This game is not active.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const index = Number(action);
+          if (!/^[0-8]$/.test(action) || game.board[index]) {
+            await interaction.reply({
+              content: "Invalid move.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          const expected = game.turn === "X" ? game.x : game.o;
+          if (interaction.user.id !== expected) {
+            await interaction.reply({
+              content: "It is not your turn.",
+              flags: MessageFlags.Ephemeral,
+            });
+            return;
+          }
+
+          cancelTimer();
+          game.board[index] = game.turn;
+          let result = winnerOf(game.board);
+
+          if (!result && game.state === "bot") {
+            const move = botMove(game.board);
+            game.board[move] = "O";
+            result = winnerOf(game.board);
+          } else if (!result) {
+            game.turn = game.turn === "X" ? "O" : "X";
+          }
+
+          if (result) {
+            await interaction.deferUpdate();
+
+            let winner = null;
+            let text;
+
+            if (result === "draw") {
+              text = " **Draw!**";
+              if (game.state === "pvp") text += " Both stakes refunded.";
+            } else if (game.state === "bot") {
+              text = result === "X" ? " **You won!**" : " **Bot won!**";
+              text += "\nFree game — no Coin gained or lost.";
+            } else {
+              winner = result === "X" ? game.x : game.o;
+              text = ` Winner: <@${winner}>\n${COIN} Payout: **${stake * 2} Coin**`;
+            }
+
+            await finish(text, winner, result);
+            return;
+          }
+
+          const turnText = game.state === "bot"
+            ? `<@${game.x}> vs  Bot\nFree game — your turn: **X**`
+            : `<@${game.x}> **X** vs <@${game.o}> **O**\n` +
+              `${COIN} Pot: **${stake * 2} Coin**\n` +
+              `Turn: <@${game.turn === "X" ? game.x : game.o}>`;
+
+          await interaction.update(gamePayload(game, turnText));
+          startTurnTimer();
+        } catch (error) {
+          console.error("XO INTERACTION ERROR:", error);
+
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({
+              content: "XO error. Any held stakes will be refunded.",
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+          }
+
+          await finish("Game stopped due to an error. Stakes refunded.", null, "error")
+            .catch(console.error);
+        } finally {
+          game.busy = false;
+        }
+      });
+
+      game.collector.on("end", async (_collected, reason) => {
+        cancelTimer();
+        games.delete(game.id);
+
+        if (game.state !== "ended") {
+          try {
+            const result = settle(game.id, null);
+            game.state = "ended";
+            await game.msg.edit(gamePayload(
+              game,
+              "Game closed. Any held stakes were refunded.",
+              true
+            )).catch(() => {});
+            await logSettlement(message.guild, result, reason);
+          } catch (error) {
+            console.error("XO REFUND ERROR:", error);
+          }
+        }
+      });
+    } catch (error) {
+      console.error("XO START ERROR:", error);
+      games.delete(game.id);
+      await message.reply({
+        ...panel("Could not start XO. Check the bot console."),
+        failIfNotExists: false,
+      }).catch(() => {});
+    }
+  });
+
+  console.log("MILAN XO LOADED");
+};

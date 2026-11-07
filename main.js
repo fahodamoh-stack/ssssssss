@@ -59,6 +59,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildModeration,
@@ -67,6 +68,7 @@ const client = new Client({
 
   partials: [
     Partials.Message,
+    Partials.Reaction,
     Partials.Channel,
     Partials.User,
     Partials.GuildMember,
@@ -162,6 +164,7 @@ function embed(text, color = CONFIG.colors.red) {
 
 async function reply(message, text) {
   return message.reply({
+    failIfNotExists: false,
     embeds: [embed(text)],
     allowedMentions: {
       repliedUser: false,
@@ -2717,4 +2720,30 @@ try {
   console.error("WELCOME GIF SETUP ERROR:", error);
 }
 require("./emoSystem")(client, db);
+// Help disabled temporarily: helpSystem.js is empty
+require('./levelSystem')(client, db);
+require('./helpSystem')(client);
+// Previous inventoryReactions worker disabled; file and data preserved.
+require('./rankSlash')(client, db);
+require('./voiceActivity')(client, db);
+require('./reactionRoles')(client, db);
+require('./ticketSystem')(client, db);
+require('./randomReactions')(client, db);
+require('./fizzyEconomy')(client, db);
+require('./milanRps')(client);
+require('./milanXO')(client, db);
+require('./milanTrivia')(client, db);
+require('./milanVoting')(client);
+require('./milanGeography')(client, db);
+require('./milanGuess')(client, db);
+require('./milanDice')(client, db);
+require('./milanCutTweet')(client, db);
+require('./milanSlots')(client, db);
+require('./milanLuckGames')(client, db);
+require('./milanImposter')(client);
+require('./milanSocialGames')(client);
+require('./milanGuessPicture')(client);
+require('./milanDailyWheel')(client, db);
+require('./milanPartnership')(client, db);
 client.login(TOKEN);
+
