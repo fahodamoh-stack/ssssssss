@@ -32,11 +32,11 @@ const CONFIG = {
 
 // Total XP required to reach a level.
 function xpForLevel(level) {
-  return 100 * level * level;
+  return 10 * level * level;
 }
 
 function calculateLevel(xp) {
-  return Math.floor(Math.sqrt(xp / 100));
+  return Math.floor(Math.sqrt(xp / 10));
 }
 
 function tierForLevel(level) {
@@ -81,6 +81,40 @@ module.exports = function registerLevelSystem(client, db) {
     CREATE INDEX IF NOT EXISTS level_members_rank
     ON level_members(guild, xp DESC, user);
   `);
+
+  // MILAN_XP_CURVE_100K
+  // Preserve XP and recalculate stored levels using the current curve.
+  // This is idempotent and runs before commands are registered.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const rows = db.prepare(
+      "SELECT guild, user, xp, level FROM level_members"
+    ).all();
+
+    const updateLevel = db.prepare(
+      "UPDATE level_members SET level = ? WHERE guild = ? AND user = ?"
+    );
+
+    let changed = 0;
+    for (const row of rows) {
+      const xp = Number(row.xp);
+      if (!Number.isSafeInteger(xp) || xp < 0) {
+        throw new Error("Invalid XP in level_members; migration rolled back.");
+      }
+
+      const level = calculateLevel(xp);
+      if (Number(row.level) !== level) {
+        updateLevel.run(level, row.guild, row.user);
+        changed++;
+      }
+    }
+
+    db.exec("COMMIT");
+    console.log(`MILAN XP CURVE READY: ${changed} stored level(s) updated.`);
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch {}
+    throw error;
+  }
 
   const ensureMember = db.prepare(`
     INSERT OR IGNORE INTO level_members

@@ -176,7 +176,7 @@ module.exports = function registerMilanDailyWheel(client, db) {
         }
 
         // Matches the existing levelSystem.js curve.
-        const level = Math.floor(Math.sqrt(newXp / 100));
+        const level = Math.floor(Math.sqrt(newXp / 10));
 
         db.prepare(`
           UPDATE level_members SET xp = ?, level = ?

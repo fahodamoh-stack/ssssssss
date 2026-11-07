@@ -249,8 +249,8 @@ module.exports = function registerRankSlash(client, db) {
           userId
         ).rank;
 
-        const startXp = 100 * row.level * row.level;
-        const nextXp = 100 * (row.level + 1) * (row.level + 1);
+        const startXp = 10 * row.level * row.level;
+        const nextXp = 10 * (row.level + 1) * (row.level + 1);
         const currentXp = row.xp - startXp;
         const neededXp = nextXp - startXp;
         const percent = Math.max(
