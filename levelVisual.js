@@ -135,8 +135,37 @@ function panel(ctx, x, y, w, h) {
   ctx.fill();
 }
 
-async function levelUpGif(user, level) {
+async function levelUpGif(user, level, guild) {
   const assets = await loadAssets(user);
+
+  // Prepare a grayscale avatar once, rather than once per frame.
+  const avatarCanvas = createCanvas(256, 256);
+  const avatarCtx = avatarCanvas.getContext("2d");
+  avatarCtx.drawImage(assets.avatar, 0, 0, 256, 256);
+  const pixels = avatarCtx.getImageData(0, 0, 256, 256);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const gray = Math.round(
+      0.299 * pixels.data[i] +
+      0.587 * pixels.data[i + 1] +
+      0.114 * pixels.data[i + 2]
+    );
+    pixels.data[i] = gray;
+    pixels.data[i + 1] = gray;
+    pixels.data[i + 2] = gray;
+  }
+  avatarCtx.putImageData(pixels, 0, 0);
+
+  let guildIcon = null;
+  const iconUrl = guild?.iconURL({ extension: "png", size: 128, forceStatic: true });
+  if (iconUrl) {
+    try {
+      const response = await fetch(iconUrl, { signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      guildIcon = await loadImage(Buffer.from(await response.arrayBuffer()));
+    } catch (error) {
+      console.warn("LEVEL GUILD ICON:", error.message);
+    }
+  }
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext("2d");
   const gif = GIFEncoder();
@@ -149,11 +178,17 @@ async function levelUpGif(user, level) {
     panel(ctx, 35, 50, 575, 400);
 
     const bounce = Math.sin(phase) * 7;
-    circleAvatar(ctx, assets.avatar, 170, 210 + bounce, 82);
+    circleAvatar(ctx, avatarCanvas, 170, 210 + bounce, 82);
 
-    text(ctx, "LEVEL UP!", 290, 145, 50, "#a6f3d3", 285);
+    // Smooth looping bounce for the title and level text.
+    const titleBounce = Math.sin(phase) * 8;
+    text(ctx, "LEVEL UP!", 290, 145 + titleBounce, 50, "#a6f3d3", 285);
     text(ctx, `@${user.username}`, 290, 220, 31, "#ffffff", 275);
-    text(ctx, `LEVEL ${level}`, 290, 280, 38, "#e5fff5", 275);
+    text(ctx, `LEVEL ${level}`, 290, 280 + titleBounce * 0.6, 38, "#e5fff5", 275);
+
+    if (guildIcon) {
+      circleAvatar(ctx, guildIcon, 700, 80, 42);
+    }
     text(ctx, "MILAN COMMUNITY", 70, 385, 19, "#a8c1b8", 450);
 
     const rgba = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;

@@ -10,7 +10,7 @@ module.exports = function registerMilanGuess(client, db) {
   const CHANNEL_COOLDOWN_MS = 60_000;
   const GUESS_COOLDOWN_MS = 3_000;
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
 
   const games = new Map();
   const lastStarted = new Map();

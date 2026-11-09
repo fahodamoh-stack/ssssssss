@@ -1581,6 +1581,7 @@ client.on(Events.MessageCreate, async message => {
 // WELCOME
 // ============================================================
 
+require("./milanAutoRole")(client);
 client.on(Events.GuildMemberAdd, async member => {
   // WELCOME DM IMAGE
   Promise.resolve()
@@ -2728,7 +2729,6 @@ require('./rankSlash')(client, db);
 require('./voiceActivity')(client, db);
 require('./reactionRoles')(client, db);
 require('./ticketSystem')(client, db);
-require('./randomReactions')(client, db);
 require('./fizzyEconomy')(client, db);
 require('./milanRps')(client);
 require('./milanXO')(client, db);

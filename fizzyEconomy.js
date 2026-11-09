@@ -8,7 +8,7 @@ module.exports = function registerFizzyEconomy(client, db) {
   const DAILY_COOLDOWN = 24 * 60 * 60 * 1000;
   const WORK_COOLDOWN = 60 * 60 * 1000;
   const MAX_BALANCE = 1_000_000_000;
-  const EMOJI = "<:coin:1568543923964616705>";
+  const EMOJI = "<:coin:1568544045041586246>";
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fizzy_wallets (
@@ -172,9 +172,18 @@ module.exports = function registerFizzyEconomy(client, db) {
 
       if (!unlimited) subtract.run(amount, guild, sender);
       add.run(amount, guild, recipient);
-      record.run(guild, sender, recipient, unlimited ? "pay_unlimited" : "pay", amount, Date.now());
+      const selfCredit = unlimited && sender === recipient;
+      record.run(
+        guild, sender, recipient,
+        selfCredit ? "pay_unlimited_self" : unlimited ? "pay_unlimited" : "pay",
+        amount, Date.now()
+      );
 
-      return { balance: unlimited ? from.balance : from.balance - amount, unlimited };
+      return {
+        balance: selfCredit ? to.balance + amount : unlimited ? from.balance : from.balance - amount,
+        unlimited,
+        selfCredit
+      };
     });
   }
 
@@ -343,7 +352,7 @@ module.exports = function registerFizzyEconomy(client, db) {
       const recipient = message.mentions.users.first();
       const amount = Number(parts[2]);
 
-      if (!recipient || recipient.bot || recipient.id === user ||
+      if (!recipient || recipient.bot ||
           !Number.isSafeInteger(amount) || amount > MAX_BALANCE) {
         await reply("اختار عضو حقيقي غيرك ومبلغ صحيح ضمن الحد المسموح.");
         return;
@@ -366,9 +375,21 @@ module.exports = function registerFizzyEconomy(client, db) {
       }
 
       const unlimitedPay = payMember.roles.cache.has("1568641134220017774");
+
+      if (recipient.id === user && !unlimitedPay) {
+        await reply("Self-payment is available only to the unlimited role.");
+        return;
+      }
+
       const result = transfer(guild, user, recipient.id, amount, unlimitedPay);
 
-      if (result.insufficient) {
+      if (result.selfCredit) {
+        await reply(
+          `${EMOJI} Added **${amount.toLocaleString("en-US")} Coin** to your saved balance.\n` +
+          `Saved balance: **${result.balance.toLocaleString("en-US")} Coin**\n` +
+          `Unlimited display: **\u221e**`
+        );
+      } else if (result.insufficient) {
         await reply("رصيدك مش كافي للتحويل.");
       } else if (result.limit) {
         await reply("التحويل هيخلّي رصيد المستلم يتعدّى الحد الأقصى.");

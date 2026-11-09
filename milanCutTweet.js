@@ -9,7 +9,7 @@ module.exports = function registerCutTweet(client, db) {
   const ROUND_MS = 30_000;
   const COOLDOWN_MS = 60_000;
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
 
   const games = new Map();
   const lastStarted = new Map();

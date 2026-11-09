@@ -5,7 +5,7 @@ const { randomInt } = require("node:crypto");
 
 module.exports = function registerTrivia(client, db) {
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
   const REWARD = 50;
   const MAX_BALANCE = 1_000_000_000;
   const active = new Set();

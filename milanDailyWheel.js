@@ -16,7 +16,7 @@ module.exports = function registerMilanDailyWheel(client, db) {
   const LOG_CHANNEL = "1566559654924914728";
   const COOLDOWN = 24 * 60 * 60 * 1000;
   const MAX_BALANCE = 1_000_000_000;
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
 
   const prizes = [
     { label: "Coin", amount: 40,  weight: 20, rarity: "Common" },
@@ -176,7 +176,7 @@ module.exports = function registerMilanDailyWheel(client, db) {
         }
 
         // Matches the existing levelSystem.js curve.
-        const level = Math.floor(Math.sqrt(newXp / 10));
+        const level = Math.floor(Math.sqrt(newXp / 150));
 
         db.prepare(`
           UPDATE level_members SET xp = ?, level = ?

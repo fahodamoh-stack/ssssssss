@@ -2,6 +2,7 @@
 
 const { Events, MessageFlags } = require("discord.js");
 const { randomInt } = require("node:crypto");
+const renderRoulette = require("./milanRouletteAnimation");
 
 module.exports = function registerLuckGames(client, db) {
   const MIN = 100;
@@ -9,7 +10,7 @@ module.exports = function registerLuckGames(client, db) {
   const MAX_BALANCE = 1_000_000_000;
   const COOLDOWN = 10_000;
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
 
   for (const table of ["fizzy_wallets", "fizzy_transactions"]) {
     const exists = db.prepare(
@@ -76,7 +77,7 @@ module.exports = function registerLuckGames(client, db) {
     VALUES (?, ?, NULL, ?, ?, ?)
   `);
 
-  function play(id, guild, user, game, stake, choice) {
+  function play(id, guild, user, game, stake, choice, unlimited) {
     db.exec("BEGIN IMMEDIATE");
     try {
       if (findRound.get(id)) {
@@ -94,7 +95,7 @@ module.exports = function registerLuckGames(client, db) {
 
       ensure.run(guild, user);
       const current = wallet.get(guild, user).balance;
-      if (current < stake) {
+      if (!unlimited && current < stake) {
         db.exec("ROLLBACK");
         return { insufficient: true };
       }
@@ -104,7 +105,7 @@ module.exports = function registerLuckGames(client, db) {
         ? (choice === "green" ? stake * 14 : stake)
         : stake * 2;
 
-      if (current + maxNetWin > MAX_BALANCE) {
+      if (!unlimited && current + maxNetWin > MAX_BALANCE) {
         db.exec("ROLLBACK");
         return { limit: true };
       }
@@ -113,9 +114,13 @@ module.exports = function registerLuckGames(client, db) {
       let delta;
 
       if (game === "roulette") {
-        // 0 = green, 1–18 = red, 19–36 = black.
+        // European roulette: one green zero, 18 red and 18 black pockets.
         const number = randomInt(37);
-        const color = number === 0 ? "green" : number <= 18 ? "red" : "black";
+        const redNumbers = new Set([
+          1, 3, 5, 7, 9, 12, 14, 16, 18,
+          19, 21, 23, 25, 27, 30, 32, 34, 36
+        ]);
+        const color = number === 0 ? "green" : redNumbers.has(number) ? "red" : "black";
         const won = color === choice;
         delta = won ? stake * (color === "green" ? 14 : 1) : -stake;
         detail = `Number ${number} • ${color} • choice ${choice}`;
@@ -128,17 +133,26 @@ module.exports = function registerLuckGames(client, db) {
         detail = `Box payout ${percentage}% • ${payout} Coin`;
       }
 
-      const balance = current + delta;
-      change.run(delta, guild, user);
-      save.run(id, guild, user, game, stake, detail, delta, balance, now);
+      const balance = unlimited ? current : current + delta;
+      if (!unlimited) change.run(delta, guild, user);
+
+      // Store actual wallet change as zero for virtual rounds.
+      // Preserve the virtual outcome in the detail and transaction kind.
+      const savedDetail = unlimited
+        ? `${detail} • unlimited virtual delta ${delta}`
+        : detail;
+      save.run(id, guild, user, game, stake, savedDetail, unlimited ? 0 : delta, balance, now);
       setCooldown.run(guild, user, game, now);
 
-      // amount is the absolute change; outcome is included in kind.
       const outcome = delta > 0 ? "win" : delta < 0 ? "loss" : "draw";
-      record.run(guild, user, `${game}_${outcome}`, Math.abs(delta), now);
+      record.run(
+        guild, user,
+        unlimited ? `roulette_unlimited_${outcome}` : `${game}_${outcome}`,
+        Math.abs(delta), now
+      );
 
       db.exec("COMMIT");
-      return { detail, delta, balance };
+      return { detail, delta, balance, unlimited };
     } catch (error) {
       try { db.exec("ROLLBACK"); } catch {}
       throw error;
@@ -176,7 +190,9 @@ module.exports = function registerLuckGames(client, db) {
         `Round: \`${message.id}\`\n` +
         `Stake: ${COIN} **${stake} Coin**\n` +
         `${result.detail}\n` +
-        `Change: **${sign}${result.delta} Coin**\n` +
+        (result.unlimited
+          ? `Virtual outcome: **${sign}${result.delta} Coin**; wallet change: **0 Coin**\n`
+          : `Change: **${sign}${result.delta} Coin**\n`) +
         `Saved balance: **${result.balance} Coin**`
       ));
     } catch (error) {
@@ -218,9 +234,24 @@ module.exports = function registerLuckGames(client, db) {
       return;
     }
 
+    let unlimited = false;
+    if (game === "roulette") {
+      const member = await message.guild.members.fetch({
+        user: message.author.id,
+        force: true
+      }).catch(() => null);
+
+      if (!member) {
+        await reply("Could not verify your roles. Please try again.")
+          .catch(console.error);
+        return;
+      }
+      unlimited = member.roles.cache.has("1568641134220017774");
+    }
+
     let result;
     try {
-      result = play(message.id, message.guild.id, message.author.id, game, stake, choice);
+      result = play(message.id, message.guild.id, message.author.id, game, stake, choice, unlimited);
     } catch (error) {
       console.error("LUCK GAMES TRANSACTION ERROR:", error);
       await reply("Could not complete the game. Check the bot console.")
@@ -245,17 +276,75 @@ module.exports = function registerLuckGames(client, db) {
       return;
     }
 
-    const outcome = result.delta > 0 ? "You win" :
-      result.delta < 0 ? "You lose" : "Draw";
+    const outcome = result.delta > 0 ? "WIN" :
+      result.delta < 0 ? "LOSS" : "DRAW";
     const sign = result.delta >= 0 ? "+" : "";
+    const heading = game === "roulette"
+      ? "**C A S I N O  /  R O U L E T T E**"
+      : "**MYSTERY  /  LUCKY BOX**";
+    const section = game === "roulette" ? "SPIN RESULT" : "BOX REVEAL";
 
-    // Settlement is committed before sending; a failed reply must not replay it.
-    await reply(
+    // Settlement is already committed. Rendering failure must not replay it.
+    const resultText =
+      `${heading}\n\n` +
+      `— **${section}** —\n` +
       `**${result.detail}**\n\n` +
-      `**${outcome}** — ${COIN} **${sign}${result.delta} Coin**\n` +
-      `${COIN} Saved balance: **${result.balance.toLocaleString("en-US")} Coin**`
-    ).catch(error => console.error("LUCK GAMES DISPLAY ERROR:", error));
+      `**${outcome}**\n` +
+      `Player: <@${message.author.id}>\n` +
+      `Stake: ${COIN} **${stake.toLocaleString("en-US")} Coin**\n` +
+      (result.unlimited
+        ? `Virtual outcome: ${COIN} **${sign}${result.delta.toLocaleString("en-US")} Coin**\n` +
+          `Balance: **\u221e** — saved balance was not changed.\n`
+        : `Net change: ${COIN} **${sign}${result.delta.toLocaleString("en-US")} Coin**\n` +
+          `Balance after round: ${COIN} **${result.balance.toLocaleString("en-US")} Coin**\n`) +
+      `Round: \`${message.id}\``;
 
+    if (game === "roulette") {
+      let gif = null;
+
+      try {
+        const match = /^Number (\d+) • (red|black|green) • choice /.exec(result.detail);
+        if (!match) throw new Error("Could not read settled roulette result.");
+
+        const number = Number(match[1]);
+        gif = await renderRoulette(number);
+      } catch (error) {
+        console.error("ROULETTE ANIMATION ERROR:", error.message);
+      }
+
+      try {
+        if (gif) {
+          const payload = panel(title, resultText);
+          payload.components[0].components.push({
+            type: 12,
+            items: [{
+              media: { url: "attachment://milan-roulette.gif" }
+            }]
+          });
+
+          await message.reply({
+            ...payload,
+            files: [{ attachment: gif, name: "milan-roulette.gif" }],
+            failIfNotExists: false,
+          });
+        } else {
+          await reply(resultText);
+        }
+      } catch (error) {
+        console.error("LUCK GAMES DISPLAY ERROR:", error);
+
+        // A fallback reports the already-settled result; it never plays again.
+        if (gif) {
+          await reply(resultText).catch(fallbackError =>
+            console.error("ROULETTE FALLBACK ERROR:", fallbackError)
+          );
+        }
+      }
+    } else {
+      await reply(resultText).catch(error =>
+        console.error("LUCK GAMES DISPLAY ERROR:", error)
+      );
+    }
     await logRound(message, game, stake, result);
   });
 

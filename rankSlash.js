@@ -249,8 +249,8 @@ module.exports = function registerRankSlash(client, db) {
           userId
         ).rank;
 
-        const startXp = 10 * row.level * row.level;
-        const nextXp = 10 * (row.level + 1) * (row.level + 1);
+        const startXp = 150 * row.level * row.level;
+        const nextXp = 150 * (row.level + 1) * (row.level + 1);
         const currentXp = row.xp - startXp;
         const neededXp = nextXp - startXp;
         const percent = Math.max(
@@ -303,7 +303,7 @@ module.exports = function registerRankSlash(client, db) {
                   "",
                   `<:stats:1568543925579415622> **Rank:** #${rank}`,
                   `<:xp:1568543922756522054> **Total XP:** ${row.xp.toLocaleString()}`,
-                  `<:coins:1568543923964616705> **Coins:** ${rankExtraStats(guildId, userId).coins}`,
+                  `<:coins:1568544045041586246> **Coins:** ${rankExtraStats(guildId, userId).coins}`,
                   `<:messages:1568543919833350204> **Messages:** ${row.messages.toLocaleString()}`,
                   `<:voice:1568543927089364992> **Voice:** ${rankExtraStats(guildId, userId).voice}`,
                 ].join("\n"),

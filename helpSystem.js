@@ -113,7 +113,6 @@ const SECTIONS = {
       "Partnerships: post a valid server invite in <#1560996824641437866>.",
       "The partnership system creates an announcement with a GIF and keeps the invite.",
       "",
-      "Random reactions are enabled in <#1560996836808855593>.",
       "Administrative sections appear according to your permissions.",
       "Some systems still need end-to-end testing."
     ].join("\n"),
@@ -157,118 +156,209 @@ const SECTIONS = {
   },
 };
 
-function availableSections(guild, userId, member) {
-  const isOwner = guild.ownerId === userId;
-  const isAdmin = Boolean(
-    member?.permissions?.has(PermissionsBitField.Flags.Administrator)
+const MEMBER_ROLE = "1567427149701451786";
+
+const STAFF_RULES = {
+  "1563517877644955790": ["timeout"],
+  "1563505395576742011": ["timeout", "voice", "status"],
+  "1563089554028634132": ["timeout", "nickname"],
+  "1561044845269876736": ["timeout", "clear", "voice"],
+  "1561044515597582336": ["timeout", "kick", "ban", "nickname"],
+  "1561043898359353485": ["all"],
+  "1565446860359868508": ["all"],
+};
+
+function getHelpAccess(guild, userId, member) {
+  const owner = guild.ownerId === userId;
+  const admin = Boolean(
+    member.permissions?.has(PermissionsBitField.Flags.Administrator)
   );
+  const rules = new Set();
 
-  return Object.entries(SECTIONS).filter(([, section]) => {
-    if (section.ownerOnly && !isOwner) return false;
-    if (section.adminOnly && !isAdmin && !isOwner) return false;
-    return true;
-  });
-}
-
-async function resolveEmojis(client, guild, sections) {
-  const result = {};
-  const missing = [];
-
-  for (const [key] of sections) {
-    const id = EMOJI_IDS[key];
-
-    let emoji = client.emojis.cache.get(id);
-
-    if (!emoji) {
-      emoji = await guild.emojis.fetch(id).catch(() => null);
+  for (const [roleId, permissions] of Object.entries(STAFF_RULES)) {
+    if (member.roles.cache.has(roleId)) {
+      for (const permission of permissions) rules.add(permission);
     }
+  }
 
-    if (!emoji && client.application?.emojis) {
-      emoji = await client.application.emojis.fetch(id).catch(() => null);
-    }
-
-    if (!emoji || !emoji.name || emoji.available === false) {
-      missing.push(id);
-      continue;
-    }
-
-    result[key] = emoji;
+  const extraFullHelpRoles = [
+    "1561045275643215992",
+    "1563541870150164631",
+    "1565432232913535136",
+    "1539363458145853590",
+  ];
+  if (owner || admin || extraFullHelpRoles.some(id => member.roles.cache.has(id))) {
+    rules.add("all");
   }
 
   return {
-    emojis: result,
-    missing: [...new Set(missing)],
+    allowed: owner || admin ||
+      member.roles.cache.has(MEMBER_ROLE) ||
+      rules.size > 0,
+    rules,
   };
 }
 
-function menuEmoji(emoji) {
-  return {
-    id: emoji.id,
-    name: emoji.name,
-    animated: Boolean(emoji.animated),
-  };
+function adminText(rules) {
+  if (rules.has("all")) {
+    return SECTIONS.settings.body;
+  }
+
+  const lines = [];
+  if (rules.has("timeout")) {
+    lines.push("`.تايم @عضو [دقائق] [سبب]`");
+  }
+  if (rules.has("nickname")) {
+    lines.push("`.نك @عضو الاسم`");
+  }
+  if (rules.has("clear")) {
+    lines.push("`.مسح العدد`");
+  }
+  if (rules.has("kick")) {
+    lines.push("`.كيك @عضو [سبب]`");
+  }
+  if (rules.has("ban")) {
+    lines.push("`.بان @عضو [سبب]` • `.انبان ID [سبب]`");
+  }
+
+  // Voice command spellings are not assumed without inspecting their handlers.
+  if (rules.has("voice")) {
+    lines.push("الفويس: ميوت • ديفن • نقل أعضاء.");
+  }
+  if (rules.has("status")) {
+    lines.push("الفويس: حالة القناة.");
+  }
+
+  if (!lines.length) return "";
+
+  lines.push("");
+  lines.push("ظهور الأمر هنا لا يمنح صلاحية تنفيذه.");
+  return lines.join("\n");
 }
 
-function buildMenu(sections, emojis) {
-  const menu = new StringSelectMenuBuilder()
-    .setCustomId("milan_help:select")
-    .setPlaceholder("اختار القسم")
-    .addOptions(
-      sections.map(([key, section]) => ({
-        label: section.label,
-        description: section.description,
-        value: key,
-        emoji: menuEmoji(emojis[key]),
-      }))
-    );
+function makeHelp(client, guild, userId, member) {
+  const access = getHelpAccess(guild, userId, member);
 
-  return new ActionRowBuilder().addComponents(menu);
-}
+  if (!access.allowed) {
+    return {
+      content: "الـHelp متاح للأعضاء اللي معاهم رول العضو أو رول إداري محدد.",
+      allowedMentions: { parse: [] },
+    };
+  }
 
-function homeEmbed(sections, emojis, client) {
-  const list = sections
-    .map(([key, section]) => `${emojis[key]} **${section.label}**`)
-    .join("\n");
+  const fields = [
+    {
+      name: "ECONOMY & COIN SYSTEM",
+      value: [
+        "`.balance` — Check your Coin balance.",
+        "`.daily` — Claim your daily reward.",
+        "`.work 100` — Bet at least 100 Coin; win or lose your bet.",
+        "`.pay @member 100` — Transfer Coins.",
+        "",
+        "**Work:** <#1560996851640045710> • <#1560996836808855593>",
+        "Standard cooldown: 1 hour; eligible roles have exceptions.",
+        "The unlimited-balance role is separate from the cooldown exemption.",
+        "*Shop, Inventory and Missions are under development.*",
+      ].join("\n"),
+    },
+    {
+      name: "LEVEL & RANK",
+      value: [
+        "`.rank` or `/rank` — View your rank in <#1560996851640045710>.",
+        "Eligible messages grant XP with a cooldown.",
+        "Level-up announcements: <#1560996854072615053>.",
+        "Your rank shows XP, level, Coin, messages and voice activity.",
+        "*Additional rank features are being completed.*",
+      ].join("\n"),
+    },
+    {
+      name: "GAMES & ENTERTAINMENT",
+      value: [
+        "**Multiplayer**",
+        "`.xo 100` — Challenge a member; if nobody joins in 15 seconds, play the bot for free.",
+        "**Quick games**",
+        "`.rps` • `.trivia` • `.wyr` • `.vote`",
+        "`.guess` • `.guesspicture` • `.cut`",
+        "**Knowledge**",
+        "`.capitals` • `.flags`",
+        "**Casino & luck**",
+        "`.dice` • `.slots` • `.roulette` • `.box`",
+        "`.حظ` — Daily prize wheel in <#1560996851640045710>.",
+        "**Social & deduction**",
+        "`.imposter` • `.mafia` • `.thief` • `.detective`",
+        "",
+        "Use each command for its instructions and rules.",
+        "Unsettled XO stakes require staff review; open a Support ticket.",
+      ].join("\n"),
+    },
+    {
+      name: "TICKETS & SUPPORT",
+      value: [
+        "Open a ticket from the ticket panel:",
+        "**Partner** • **Report** • **Support** • **Verify Girl**",
+        "Staff can claim and close tickets; ticket activity is logged.",
+        "For game or transaction problems, open a Support ticket.",
+      ].join("\n"),
+    },
+    {
+      name: "SERVER & COMMUNITY",
+      value: [
+        "`.help` — Display the Help Center in chat.",
+        "`/help` — Open the Help Center privately.",
+        "`.rank` or `/rank` — View your rank in <#1560996851640045710>.",
+        "**Partnerships**",
+        "Post a valid server invite in <#1560996824641437866>.",
+        "The system creates an announcement with a GIF and keeps the invite.",
+      ].join("\n"),
+    },
+  ];
 
-  return new EmbedBuilder()
+  // Display only: keep the existing role mapping and command permissions.
+  const administration = adminText(access.rules)
+    .split("\n")
+    .filter(line => !line.includes(".wlctest") && !line.includes(".wl.5"))
+    .join("\n")
+    .trim();
+
+  if (administration) {
+    fields.push({ name: "ADMINISTRATION", value: administration });
+  }
+
+  for (const field of fields) {
+    if (!field.value || field.value.length > 1024) {
+      throw new Error(`HELP FIELD INVALID: ${field.name}`);
+    }
+  }
+
+  const total = fields.reduce(
+    (sum, field) => sum + field.name.length + field.value.length, 0
+  );
+  if (total > 5500) throw new Error(`HELP TOO LONG: ${total}`);
+
+  const embed = new EmbedBuilder()
     .setColor(0x203234)
-    .setTitle("MILAN • HELP CENTER")
-    .setDescription([
-      "**Your ultimate server companion**",
-      "",
-      "**ONLINE**",
-      "",
-      "**أهلاً بك في قائمة المساعدة**",
-      "اختار القسم من القائمة علشان تشوف التفاصيل.",
-      "",
-      list,
-      "",
-      "*الأنظمة غير المنفذة موضحة داخل أقسامها.*",
-    ].join("\n"))
+    .setTitle("MILAN | HELP CENTER")
+    .setDescription(
+      "Welcome to **MILAN COMMUNITY**.\n" +
+      "Your destination for gaming, economy, rankings and community."
+    )
+    .addFields(fields)
     .setThumbnail(client.user.displayAvatarURL())
-    .setFooter({ text: "MILAN • HELP CENTER" });
+    .setFooter({ text: "MILAN | PLAY • COMPETE • PROGRESS" });
+
+  return {
+    embeds: [embed],
+    allowedMentions: { parse: [] },
+  };
 }
-
-function sectionEmbed(key, emoji) {
-  const section = SECTIONS[key];
-
-  return new EmbedBuilder()
-    .setColor(0x203234)
-    .setTitle(`${emoji} ${section.label}`)
-    .setDescription(section.body)
-    .setFooter({ text: "MILAN • HELP CENTER" });
-}
-
 module.exports = function registerHelpSystem(client) {
   async function registerSlash(guild) {
     try {
-      // Creates or updates only /help; does not replace other commands.
       await guild.commands.create({
         name: "help",
         description: "Open the MILAN help center",
         dm_permission: false,
       });
-
       console.log(`HELP SLASH READY [${guild.id}]`);
     } catch (error) {
       console.error(`HELP REGISTER [${guild.id}]:`, error.message);
@@ -285,118 +375,50 @@ module.exports = function registerHelpSystem(client) {
     registerSlash(guild).catch(console.error);
   });
 
-  async function makeHome(guild, userId, member) {
-    const sections = availableSections(guild, userId, member);
-    const { emojis, missing } = await resolveEmojis(client, guild, sections);
-
-    if (missing.length) {
-      throw new Error(
-        `HELP EMOJIS UNAVAILABLE: ${missing.join(", ")}`
-      );
-    }
-
-    return {
-      embeds: [homeEmbed(sections, emojis, client)],
-      components: [buildMenu(sections, emojis)],
-      allowedMentions: { parse: [], repliedUser: false },
-    };
-  }
-
   client.on(Events.MessageCreate, async message => {
     if (!message.guild || message.author.bot || message.webhookId) return;
     if (message.content.trim().toLowerCase() !== ".help") return;
 
     try {
-      const payload = await makeHome(
-        message.guild,
-        message.author.id,
-        message.member
-      );
-
-      await message.reply(payload);
-    } catch (error) {
-      console.error("HELP MESSAGE ERROR:", error);
+      const member = await message.guild.members.fetch(message.author.id);
+      const payload = makeHelp(client, message.guild, message.author.id, member);
 
       await message.reply({
-        content: "تعذر فتح الـHelp. تأكد من إيموجيات البوت وصلاحياته، وراجع الكونسل.",
+        ...payload,
+        allowedMentions: { parse: [], repliedUser: false },
+      });
+    } catch (error) {
+      console.error("HELP MESSAGE ERROR:", error);
+      await message.reply({
+        content: "تعذر فتح الـHelp حاليًا. راجع الكونسل.",
         allowedMentions: { parse: [], repliedUser: false },
       }).catch(console.error);
     }
   });
-
   client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.inGuild()) return;
-
-    const isHelpCommand =
-      interaction.isChatInputCommand() &&
-      interaction.commandName === "help";
-
-    const isHelpMenu =
-      interaction.isStringSelectMenu() &&
-      interaction.customId === "milan_help:select";
-
-    if (!isHelpCommand && !isHelpMenu) return;
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== "help") return;
 
     try {
-      // Acknowledge first: emoji/member fetching can take more than 3 seconds.
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-      const member = await interaction.guild.members
-        .fetch(interaction.user.id)
-        .catch(() => null);
-
-      if (!member) {
-        await interaction.editReply("مش قادر أتحقق من عضويتك حالياً.");
-        return;
-      }
-
-      if (isHelpCommand) {
-        const payload = await makeHome(
-          interaction.guild,
-          interaction.user.id,
-          member
-        );
-
-        await interaction.editReply(payload);
-        return;
-      }
-
-      const key = interaction.values[0];
-      const sections = availableSections(
-        interaction.guild,
-        interaction.user.id,
-        member
+      const member = await interaction.guild.members.fetch(interaction.user.id);
+      await interaction.editReply(
+        makeHelp(client, interaction.guild, interaction.user.id, member)
       );
-
-      if (!sections.some(([sectionKey]) => sectionKey === key)) {
-        await interaction.editReply("القسم ده مش متاح ليك.");
-        return;
-      }
-
-      const { emojis, missing } = await resolveEmojis(
-        client,
-        interaction.guild,
-        [[key, SECTIONS[key]]]
-      );
-
-      if (missing.length) {
-        throw new Error(`HELP EMOJI UNAVAILABLE: ${missing.join(", ")}`);
-      }
-
-      await interaction.editReply({
-        embeds: [sectionEmbed(key, emojis[key])],
-        allowedMentions: { parse: [] },
-      });
     } catch (error) {
       console.error("HELP INTERACTION ERROR:", error);
+      const payload = {
+        content: "تعذر فتح الـHelp حاليًا. راجع الكونسل.",
+        allowedMentions: { parse: [] },
+      };
 
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(
-          "تعذر فتح القسم. تأكد من الإيموجيات وراجع الكونسل."
-        ).catch(console.error);
+        await interaction.editReply(payload).catch(console.error);
       } else {
         await interaction.reply({
-          content: "حصل خطأ. راجع الكونسل.",
+          ...payload,
           flags: MessageFlags.Ephemeral,
         }).catch(console.error);
       }

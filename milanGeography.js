@@ -7,7 +7,7 @@ module.exports = function registerGeography(client, db) {
   const REWARD = 50;
   const LIMIT = 1_000_000_000;
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
   const active = new Set();
 
   const capitals = [

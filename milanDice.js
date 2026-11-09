@@ -5,7 +5,7 @@ const { randomInt } = require("node:crypto");
 
 module.exports = function registerMilanDice(client, db) {
   const LOG_CHANNEL = "1566559654924914728";
-  const COIN = "<:coin:1568543923964616705>";
+  const COIN = "<:coin:1568544045041586246>";
   const MIN_BET = 100;
   const MAX_BET = 100_000;
   const MAX_BALANCE = 1_000_000_000;
@@ -216,17 +216,22 @@ module.exports = function registerMilanDice(client, db) {
     }
 
     const label = result.outcome === "win"
-      ? "You win"
-      : result.outcome === "loss" ? "You lose" : "Draw";
+      ? "VICTORY"
+      : result.outcome === "loss" ? "DEFEAT" : "DRAW";
+    const change = `${result.delta >= 0 ? "+" : ""}${result.delta.toLocaleString("en-US")}`;
+    const dice = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
 
-    const change = `${result.delta >= 0 ? "+" : ""}${result.delta}`;
-
-    // The transaction is already committed; never replay it if sending fails.
+    // Settlement is already committed before this display.
     await reply(
-      `Your roll: **${result.playerRoll}**\n` +
-      `Bot roll: **${result.botRoll}**\n\n` +
-      `**${label}** — ${COIN} **${change} Coin**\n` +
-      `${COIN} Saved balance: **${result.balance.toLocaleString("en-US")} Coin**`
+      `**THE DICE DUEL**\n` +
+      `<@${message.author.id}>  **vs**  MILAN\n\n` +
+      `**${dice[result.playerRoll - 1]} ${result.playerRoll}**  —  ` +
+      `**${dice[result.botRoll - 1]} ${result.botRoll}**\n\n` +
+      `— **${label}** —\n` +
+      `Stake: ${COIN} **${stake.toLocaleString("en-US")} Coin**\n` +
+      `Net change: ${COIN} **${change} Coin**\n` +
+      `Balance after round: ${COIN} **${result.balance.toLocaleString("en-US")} Coin**\n` +
+      `Round: \`${message.id}\``
     ).catch(error => console.error("DICE DISPLAY ERROR:", error));
 
     await logRound(message.guild, message, stake, result);
