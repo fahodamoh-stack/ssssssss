@@ -75,6 +75,14 @@ function safeName(value) {
     .slice(0, 60) || "Server";
 }
 
+function isDecoratedName(value) {
+  return /[^\u0000-\u024F]/u.test(String(value || ""));
+}
+
+function getNameFont(value, size) {
+  const family = isDecoratedName(value) ? "sans-serif" : fontFamily;
+  return `bold ${size}px "${family}", sans-serif`;
+}
 function safeLogText(value) {
   return String(value || "")
     .replace(/[\r\n`<>@]/g, " ")
@@ -124,14 +132,22 @@ function circleImage(ctx, image, x, y, radius, alpha, glow) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  ctx.shadowColor = `rgba(180, 145, 255, ${glow})`;
-  ctx.shadowBlur = 24;
+  ctx.shadowColor = `rgba(0, 145, 255, ${glow})`;
+  ctx.shadowBlur = 32;
+
   ctx.beginPath();
-  ctx.arc(x, y, radius + 5, 0, Math.PI * 2);
-  ctx.fillStyle = "#d9c6ff";
+  ctx.arc(x, y, radius + 7, 0, Math.PI * 2);
+  ctx.fillStyle = "#168BFF";
   ctx.fill();
 
   ctx.shadowBlur = 0;
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius + 2, 0, Math.PI * 2);
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.clip();
@@ -147,19 +163,8 @@ function circleImage(ctx, image, x, y, radius, alpha, glow) {
   );
 
   ctx.restore();
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.strokeStyle = "#ede4ff";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(x, y, radius, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
 }
-
 async function renderGif(localIconUrl, partnerIconUrl, localName, partnerName) {
-  // Both URLs are produced by Discord.js from Discord guild objects.
   const [background, localIcon, partnerIcon] = await Promise.all([
     loadImage(backgroundPath),
     loadImage(localIconUrl),
@@ -174,48 +179,106 @@ async function renderGif(localIconUrl, partnerIconUrl, localName, partnerName) {
 
   const frames = 32;
 
+  function fittedText(text, x, y, maxWidth, startSize) {
+    let size = startSize;
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    do {
+      ctx.font = getNameFont(text, size);
+      if (ctx.measureText(text).width <= maxWidth) break;
+      size--;
+    } while (size > 12);
+
+    ctx.fillText(text, x, y, maxWidth);
+  }
+
   for (let frame = 0; frame < frames; frame++) {
     const fade = Math.min(1, (frame + 1) / 10);
-    const pulse = 0.25 + 0.2 * (1 + Math.sin(frame * Math.PI * 2 / frames));
+    const pulse = 0.5 + 0.5 * Math.sin(frame * Math.PI * 2 / frames);
 
     ctx.clearRect(0, 0, width, height);
     cover(ctx, background, width, height);
 
-    // Dark overlay keeps text and icons readable over any background.
-    ctx.fillStyle = "rgba(6, 8, 16, 0.48)";
+    ctx.fillStyle = "rgba(2, 6, 14, 0.88)";
     ctx.fillRect(0, 0, width, height);
 
     const gradient = ctx.createLinearGradient(0, 0, width, height);
-    gradient.addColorStop(0, "rgba(125, 84, 180, 0.18)");
-    gradient.addColorStop(0.5, "rgba(8, 10, 18, 0.08)");
-    gradient.addColorStop(1, "rgba(95, 130, 180, 0.18)");
+    gradient.addColorStop(0, "rgba(0, 90, 190, 0.35)");
+    gradient.addColorStop(0.5, "rgba(0, 15, 35, 0.12)");
+    gradient.addColorStop(1, "rgba(0, 130, 255, 0.28)");
+
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    circleImage(ctx, localIcon, 190, 210, 85, fade, pulse);
-    circleImage(ctx, partnerIcon, 610, 210, 85, fade, pulse);
+    // Animated blue top line
+    ctx.save();
+    ctx.globalAlpha = 0.35 + pulse * 0.45;
+    ctx.shadowColor = "#008CFF";
+    ctx.shadowBlur = 25;
+    ctx.strokeStyle = "#168BFF";
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    ctx.moveTo(70, 65);
+    ctx.lineTo(730, 65);
+    ctx.stroke();
+    ctx.restore();
+
+    // Server icons
+    circleImage(ctx, localIcon, 180, 215, 82, fade, 0.45 + pulse * 0.4);
+    circleImage(ctx, partnerIcon, 620, 215, 82, fade, 0.45 + pulse * 0.4);
 
     ctx.save();
     ctx.globalAlpha = fade;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = "#ffffff";
-    ctx.shadowColor = "rgba(185, 150, 255, 0.8)";
-    ctx.shadowBlur = 12 + pulse * 15;
-    ctx.font = `bold 34px "${fontFamily}", sans-serif`;
-    ctx.fillText("PARTNER WITH", 400, 210, 230);
 
+    // Main title
+    ctx.shadowColor = "#008CFF";
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = `bold 37px "${fontFamily}", sans-serif`;
+    ctx.fillText("PARTNERSHIP", 400, 115, 430);
+
+    // Subtitle
     ctx.shadowBlur = 0;
-    ctx.font = `bold 23px "${fontFamily}", sans-serif`;
-    ctx.fillText(localName, 190, 330, 260);
-    ctx.fillText(partnerName, 610, 330, 260);
+    ctx.fillStyle = "#168BFF";
+    ctx.font = `bold 17px "${fontFamily}", sans-serif`;
+    ctx.fillText("MILAN NETWORK", 400, 155, 300);
 
-    ctx.strokeStyle = "rgba(235, 222, 255, 0.6)";
+    // Server names
+    ctx.fillStyle = "#FFFFFF";
+    ctx.shadowColor = "#168BFF";
+    ctx.shadowBlur = 10;
+
+    fittedText(localName, 180, 330, 260, 25);
+    fittedText(partnerName, 620, 330, 260, 25);
+
+    // Center separator
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = "#168BFF";
+    ctx.font = `bold 38px "${fontFamily}", sans-serif`;
+    ctx.fillText("×", 400, 220);
+
+    // Bottom line
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#168BFF";
+    ctx.globalAlpha = fade * (0.5 + pulse * 0.5);
     ctx.lineWidth = 2;
+
     ctx.beginPath();
-    ctx.moveTo(330, 248);
-    ctx.lineTo(470, 248);
+    ctx.moveTo(250, 380);
+    ctx.lineTo(550, 380);
     ctx.stroke();
+
+    // Footer
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = "#FFFFFF";
+    ctx.font = `bold 15px "${fontFamily}", sans-serif`;
+    ctx.fillText("OFFICIAL PARTNERSHIP", 400, 415);
+
     ctx.restore();
 
     const rgba = ctx.getImageData(0, 0, width, height).data;
@@ -227,7 +290,6 @@ async function renderGif(localIconUrl, partnerIconUrl, localName, partnerName) {
       repeat: 0
     });
 
-    // Yield so other bot events can continue between frames.
     await new Promise(resolve => setImmediate(resolve));
   }
 
@@ -242,7 +304,6 @@ async function renderGif(localIconUrl, partnerIconUrl, localName, partnerName) {
 
   return result;
 }
-
 function logPanel(title, text) {
   return {
     flags: MessageFlags.IsComponentsV2,
@@ -430,6 +491,7 @@ module.exports = function registerPartnership(client, db) {
 
       const localName = safeName(message.guild.name);
       const partnerName = safeName(invite.guild.name);
+      const partnerInvite = `https://discord.gg/${invites[0].code}`;
 
       setPartner.run(
         invite.guild.id,
@@ -480,6 +542,11 @@ module.exports = function registerPartnership(client, db) {
       });
 
       posted = true;
+
+      await message.channel.send({
+        content: partnerInvite,
+        allowedMentions: { parse: [], repliedUser: false }
+      });
 
       // Save the announcement ID before attempting to delete the source.
       const changed = setPosted.run(announcement.id, Date.now(), message.id);

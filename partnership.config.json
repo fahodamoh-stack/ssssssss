@@ -1,1 +1,11 @@
-
+{
+  "channelId": "1560996824641437866",
+  "logChannelId": "1560996906686091284",
+  "backgroundPath": "par.png",
+  "fontPaths": [
+    "Floane-Bold.otf",
+    "KOMission-Black.otf"
+  ],
+  "maxDescriptionLength": 1500,
+  "maxGifBytes": 8000000
+}
